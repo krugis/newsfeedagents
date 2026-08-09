@@ -46,6 +46,23 @@ def cmd_dedup(_args: argparse.Namespace) -> None:
         print(f"errors:             {stats['errors']}")
 
 
+def cmd_label(args: argparse.Namespace) -> None:
+    from newspipe.labeling.labeler import run_label
+
+    stats = run_label(limit=args.limit)
+    if stats.get("skipped"):
+        print("labeling skipped: ANTHROPIC_API_KEY not set")
+        return
+    print(f"selected: {stats['selected']}, labeled: {stats['labeled']}, failed: {stats['failed']}")
+    titles = {c.story_id: c.title for c in stats["contexts"]}
+    print(f"{'title':<62}{'is_hot':>7}{'importance':>11}{'category':>20}")
+    for story_id, label in stats["results"].items():
+        title = titles.get(story_id, f"story {story_id}")
+        print(
+            f"{title[:60]:<62}{str(label.is_hot):>7}{label.importance:>11}{label.category:>20}"
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="newspipe", description="GenAI/ML news ingestion pipeline"
@@ -54,6 +71,8 @@ def main() -> None:
     subparsers.add_parser("migrate", help="Apply pending DB migrations")
     subparsers.add_parser("fetch", help="Run all due fetchers once")
     subparsers.add_parser("dedup", help="Storify all unattached arrivals")
+    label_parser = subparsers.add_parser("label", help="LLM-label unlabeled stories")
+    label_parser.add_argument("--limit", type=int, default=None, help="max stories to label")
 
     args = parser.parse_args()
     if args.command == "migrate":
@@ -62,6 +81,8 @@ def main() -> None:
         cmd_fetch(args)
     elif args.command == "dedup":
         cmd_dedup(args)
+    elif args.command == "label":
+        cmd_label(args)
 
 
 if __name__ == "__main__":

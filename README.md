@@ -29,6 +29,7 @@ uv run pytest                 # smoke test: tables exist
 uv run python -m newspipe migrate   # apply pending migrations
 uv run python -m newspipe fetch     # poll every due source once (prints per-source counts)
 uv run python -m newspipe dedup     # storify all unattached arrivals (normalize + dedup v1)
+uv run python -m newspipe label     # LLM-label unlabeled stories (--limit N, prints table)
 uv run python scripts/seed_sources.py  # (idempotent) insert the Phase 1 source registry
 ```
 
@@ -49,6 +50,7 @@ src/newspipe/
   db/sources.py    # due-source selection
   db/arrivals.py   # idempotent arrival persistence
   fetchers/        # one fetcher per method type (base/rss/hn_algolia/google_news_rss)
+  labeling/        # LLM labeling (schema.py HeadlineLabel, labeler.py chain + batch)
   models/schemas.py# Pydantic domain models (RawItem, Source)
 scripts/seed_sources.py  # Phase 1 source registry (idempotent upsert)
 tests/             # pytest suite; tests/fixtures/ holds recorded responses
@@ -65,6 +67,18 @@ xact lock (fixed key) so concurrent dedup runs serialize. Note: identical
 titles in different articles (e.g. OpenAI's repeated "Team update" posts)
 collapse into one story by design in v1; LLM labeling can differentiate
 content, and embedding-based dedup is a Phase 2 item.
+
+## LLM labeling
+
+`python -m newspipe label` selects stories without a labels row and labels them
+in batches (`max_concurrency` from `BATCH_CONCURRENCY`). The chain is
+`init_chat_model(claude-sonnet-4-6, provider=anthropic).with_structured_output(HeadlineLabel).with_retry()`
+with prompt version `p1` stored in `labels.prompt_version`. The prompt receives
+title, source names, arrival_count, and hn_front_page, and treats cross-source
+arrival as an explicit importance signal. A story that fails labeling stays
+unlabeled for the next run. Without `ANTHROPIC_API_KEY` the command skips
+cleanly. One `labels` row is persisted per labeling (relabeling is possible
+later because labels are a separate table).
 
 ## Sources
 

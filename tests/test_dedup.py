@@ -78,6 +78,12 @@ def _cleanup_dedup_data() -> None:
     with get_engine().begin() as conn:
         conn.execute(
             text(
+                "DELETE FROM labels WHERE story_id IN"
+                " (SELECT story_id FROM stories WHERE canonical_url LIKE 'https://dedup.test/%')"
+            )
+        )
+        conn.execute(
+            text(
                 "DELETE FROM arrivals WHERE source_id IN"
                 " (SELECT source_id FROM sources WHERE name LIKE '__dedup_test__%')"
             )

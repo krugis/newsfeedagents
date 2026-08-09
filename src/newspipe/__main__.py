@@ -96,6 +96,18 @@ def cmd_run(args: argparse.Namespace) -> None:
             print(f"  {err}")
 
 
+def cmd_status(_args: argparse.Namespace) -> None:
+    from newspipe.status import print_status
+
+    print_status()
+
+
+def cmd_schedule(_args: argparse.Namespace) -> None:
+    from newspipe.scheduler import main as scheduler_main
+
+    scheduler_main()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="newspipe", description="GenAI/ML news ingestion pipeline"
@@ -119,6 +131,8 @@ def main() -> None:
         default=None,
         help="thread_id to resume from a checkpoint (mutually exclusive with --thread)",
     )
+    subparsers.add_parser("schedule", help="Run the hourly APScheduler (blocking)")
+    subparsers.add_parser("status", help="Show last runs, backlog, per-source status")
 
     args = parser.parse_args()
     if args.command == "migrate":
@@ -131,6 +145,10 @@ def main() -> None:
         cmd_label(args)
     elif args.command == "run":
         cmd_run(args)
+    elif args.command == "schedule":
+        cmd_schedule(args)
+    elif args.command == "status":
+        cmd_status(args)
 
 
 if __name__ == "__main__":

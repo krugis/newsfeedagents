@@ -33,6 +33,8 @@ uv run python -m newspipe label     # LLM-label unlabeled stories (--limit N, pr
 uv run python -m newspipe run              # one full LangGraph run (this hour's thread_id)
 uv run python -m newspipe run --thread X   # fresh run on thread_id X
 uv run python -m newspipe run --resume X   # resume thread_id X from its checkpoint
+uv run python -m newspipe schedule         # hourly APScheduler (blocking; see systemd below)
+uv run python -m newspipe status           # last 5 runs, backlog, per-source status
 uv run python scripts/seed_sources.py  # (idempotent) insert the Phase 1 source registry
 ```
 
@@ -94,6 +96,40 @@ coupling.
 > thread id, in addition to the spec's `--resume`) was added for the gate 1.4
 > kill-and-resume demo. It is mutually exclusive with `--resume`.
 
+## Scheduler + logging
+
+`python -m newspipe schedule` runs an APScheduler `BlockingScheduler` with a
+cron trigger at **minute 5 hourly (UTC)**, `max_instances=1`,
+`coalesce=True`, `misfire_grace_time=600`. Each tick invokes the graph with
+the hour-slot thread id (`run-YYYYMMDD-HH`), so two runs can never overlap
+and a missed run coalesces into one.
+
+Logging is structured JSON lines to stdout and to a rotating file
+(`logs/newspipe.log`, 10 MB x 5 backups). Per-run summaries are logged at
+INFO (thread_id, status, new_stories, labeled, error_count, duration);
+per-source detail is logged at DEBUG. Extra fields ride along via
+`extra={"json_fields": {...}}`.
+
+### systemd (do NOT enable until Gate 1.5 sign-off)
+
+```bash
+# install: copy the unit, reload, enable to auto-start (we only did the first
+# two; enabling is gated on your sign-off)
+cp deploy/newspipe.service /etc/systemd/system/newspipe.service
+systemctl daemon-reload
+systemctl start newspipe      # manual start, NOT yet enabled
+systemctl status newspipe
+# logs:
+journalctl -u newspipe -f
+tail -f logs/newspipe.log
+```
+
+## Operational status
+
+`python -m newspipe status` prints: the last 5 `pipeline_runs` (status, new
+stories, labeled, errors, duration), the unlabeled backlog count, and each
+source's last poll time / enabled state.
+
 ## Dedup v1 (exact match)
 
 `python -m newspipe dedup` storifies every unattached arrival. Matching is
@@ -128,8 +164,52 @@ build time), so there is no feed URL to poll. Enable it once a feed is chosen
 ## Database
 
 Tables: `sources`, `arrivals`, `stories`, `labels`, `pipeline_runs` plus the
-runner's `schema_migrations` bookkeeping table. See
+runner's `schema_migrations` bookkeeping table and LangGraph's checkpoint
+tables (`checkpoints`, `checkpoint_writes`, `checkpoint_blobs`). See
 `src/newspipe/db/migrations/0001_initial.sql` for DDL.
+
+```
+sources ──< arrivals ──> stories ──< labels
+              │             │
+              │             └── stories.title_hash (dedup v1 match key)
+              │
+        (source_id, external_id) UNIQUE  → idempotent fetch
+pipeline_runs (thread_id UNIQUE, status, stats)   ← graph run bookkeeping
+checkpoints / checkpoint_writes / checkpoint_blobs ← PostgresSaver (LangGraph)
+schema_migrations ← tiny SQL-file migration runner
+```
+
+## Failure modes (verified behavior)
+
+| Failure | What happens | Handled? |
+|---|---|---|
+| Feed 404s / 5xx | Fetcher raises; per-source try/except records the error in `state.errors`/stats, `last_polled_at` NOT updated, run completes `completed_with_errors`, source retried next run | yes |
+| Postgres briefly down | `pool_pre_ping` reconnects; if down at start, `select_due_sources` raises → scheduler logs the failure and the next tick retries; mid-run, per-source fetch errors are isolated | yes |
+| LLM rate-limited (DeepSeek) | `.with_retry()` on the chain + per-item fallback in `_label_batch`; failed stories stay unlabeled and are picked up next run; batch never blocks | yes |
+| Two runs would overlap | APScheduler `max_instances=1` + `coalesce=True` + `misfire_grace_time=600`; dedup additionally holds a Postgres advisory xact lock | yes |
+| Process dies mid-run | PostgresSaver checkpoint persists; same-hour re-invoke (`--resume <thread_id>`) continues from the checkpoint (fetch not re-executed); next hour's run uses a fresh thread id | yes |
+
+## 72h soak-test checklist (after enabling the scheduler)
+
+- [ ] `python -m newspipe status` shows ~72 `pipeline_runs` (one per hour), none stuck `running`, all `completed`/`completed_with_errors`.
+- [ ] `logs/newspipe.log` has no repeated crashes; per-run summaries at INFO look sane (new_stories ~ 0-20, labeled 0-100).
+- [ ] Unlabeled backlog is at or near 0 (drained at 100/run) — new arrivals labeled within the hour.
+- [ ] `arrivals` grows hourly; `(source_id, external_id)` dedup keeps inserts idempotent (re-runs insert 0).
+- [ ] `stories.arrival_count >= 2` stories appear (cross-source collapse) and `hn_front_page` flags are set for HN front-page items.
+- [ ] Any `completed_with_errors` rows have a plausible error (a dead feed) and the source recovers next poll.
+- [ ] No duplicate cron overlaps during peak hours; container `newspipe-postgres` healthy, volume `pgdata` growing normally.
+- [ ] `journalctl -u newspipe` rotates cleanly (no OOM/restart loops); `Restart=on-failure` survived one deliberate `kill` of the scheduler.
+
+## Phase 2 recommendations (for sign-off discussion)
+
+- **pgvector** for embedding-based dedup (install the extension in the
+  `postgres:16` container and add a `stories.embedding` vector column) —
+  replaces title-hash collapse artifacts ("Team update" ×3).
+- Label prompt tuning (flagged at Gate 1.3: routine M&A hot-ness,
+  category choice for model-dev news) with `PROMPT_VERSION` bump to `p2`.
+- Anthropic Blog: pick a community RSS mirror or build a scraper (Phase 2).
+- Optional: label evaluation harness (re-label a fixed eval set, compare
+  agreement) now that `labels` rows are versioned by `prompt_version`.
 
 ## Roadmap (gates)
 
@@ -138,4 +218,4 @@ runner's `schema_migrations` bookkeeping table. See
 - 1.2 normalization + dedup v1
 - 1.3 LLM labeling
 - 1.4 LangGraph assembly + checkpointing
-- 1.5 scheduler, hardening, runbook
+- 1.5 scheduler, hardening, runbook (final gate)

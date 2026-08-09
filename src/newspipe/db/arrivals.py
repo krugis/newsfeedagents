@@ -15,15 +15,16 @@ _INSERT = text(
     VALUES
         (:source_id, :external_id, :url, :url_canonical, :title, :published_at, CAST(:raw AS jsonb))
     ON CONFLICT (source_id, external_id) DO NOTHING
+    RETURNING arrival_id
     """
 )
 
 
-def insert_arrivals(conn, source_id: int, items: list[RawItem]) -> int:
-    """Insert arrivals idempotently; returns the number actually inserted."""
-    inserted = 0
+def insert_arrivals(conn, source_id: int, items: list[RawItem]) -> list[int]:
+    """Insert arrivals idempotently; returns the inserted arrival_ids."""
+    inserted_ids: list[int] = []
     for item in items:
-        result = conn.execute(
+        arrival_id = conn.execute(
             _INSERT,
             {
                 "source_id": source_id,
@@ -34,9 +35,10 @@ def insert_arrivals(conn, source_id: int, items: list[RawItem]) -> int:
                 "published_at": item.published_at,
                 "raw": json.dumps(item.raw, default=str),
             },
-        )
-        inserted += result.rowcount or 0
-    return inserted
+        ).scalar_one_or_none()
+        if arrival_id is not None:
+            inserted_ids.append(int(arrival_id))
+    return inserted_ids
 
 
 def update_source_last_polled(conn, source_id: int) -> None:

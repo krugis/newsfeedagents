@@ -76,6 +76,7 @@ def run_dedup() -> dict:
         "stories_updated": 0,
         "attachments": 0,
         "errors": 0,
+        "affected_story_ids": [],
     }
     engine = get_engine()
     with engine.begin() as conn:
@@ -109,6 +110,7 @@ def run_dedup() -> dict:
 
                 conn.execute(_ATTACH_ARRIVAL, {"sid": story_id, "aid": arrival["arrival_id"]})
                 stats["attachments"] += 1
+                stats["affected_story_ids"].append(int(story_id))
             except Exception:  # noqa: BLE001 - one bad arrival must not abort the pass
                 stats["errors"] += 1
     return stats

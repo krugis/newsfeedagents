@@ -29,3 +29,12 @@ def select_due_sources(conn, source_ids: list[int] | None = None) -> list[Source
         params["source_ids"] = tuple(source_ids)
     rows = conn.execute(stmt, params).mappings().fetchall()
     return [Source(**dict(row)) for row in rows]
+
+
+def select_source_by_id(conn, source_id: int) -> Source:
+    """Load a single source row; raises if it does not exist."""
+    row = conn.execute(
+        text("SELECT " + _SOURCE_COLUMNS + " FROM sources WHERE source_id = :id"),
+        {"id": source_id},
+    ).mappings().one()
+    return Source(**dict(row))

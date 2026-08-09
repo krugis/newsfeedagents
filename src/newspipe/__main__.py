@@ -63,6 +63,39 @@ def cmd_label(args: argparse.Namespace) -> None:
         )
 
 
+def cmd_run(args: argparse.Namespace) -> None:
+    from newspipe.graph.build import build_graph, hour_thread_id
+    from newspipe.graph.state import INITIAL_STATE
+
+    graph = build_graph()
+    thread_id = args.resume or args.thread or hour_thread_id()
+    # Resuming passes None as input so LangGraph continues from the checkpoint
+    # instead of restarting; a fresh run seeds the initial state.
+    inp = None if args.resume else INITIAL_STATE
+    result = graph.invoke(inp, config={"configurable": {"thread_id": thread_id}})
+
+    stats = result.get("stats", {})
+    print(f"thread_id: {thread_id}")
+    status = stats.get("status", "?")
+    print(f"status:    {status}  (duration {stats.get('duration_seconds', '?')}s)")
+    print(f"{'source':<34}{'fetched':>9}{'inserted':>10}  error")
+    for name, s in sorted((stats.get("sources") or {}).items()):
+        print(f"{name:<34}{s.get('fetched', 0):>9}{s.get('inserted', 0):>10}  {s.get('error', '')}")
+    print(
+        f"new stories: {stats.get('new_stories', 0)}, updated: {stats.get('stories_updated', 0)}, "
+        f"labeled: {stats.get('labeled', 0)}, errors: {stats.get('error_count', 0)}"
+    )
+    print(
+        "fetch executions: "
+        f"{len(result.get('fetch_results', []))}, "
+        f"new arrival ids: {len(result.get('new_arrival_ids', []))}"
+    )
+    if result.get("errors"):
+        print("\nerrors:")
+        for err in result["errors"]:
+            print(f"  {err}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="newspipe", description="GenAI/ML news ingestion pipeline"
@@ -73,6 +106,19 @@ def main() -> None:
     subparsers.add_parser("dedup", help="Storify all unattached arrivals")
     label_parser = subparsers.add_parser("label", help="LLM-label unlabeled stories")
     label_parser.add_argument("--limit", type=int, default=None, help="max stories to label")
+    run_parser = subparsers.add_parser("run", help="Run the LangGraph pipeline once")
+    run_parser.add_argument(
+        "--thread",
+        type=str,
+        default=None,
+        help="thread_id to start a fresh run on (default: this hour's slot)",
+    )
+    run_parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="thread_id to resume from a checkpoint (mutually exclusive with --thread)",
+    )
 
     args = parser.parse_args()
     if args.command == "migrate":
@@ -83,6 +129,8 @@ def main() -> None:
         cmd_dedup(args)
     elif args.command == "label":
         cmd_label(args)
+    elif args.command == "run":
+        cmd_run(args)
 
 
 if __name__ == "__main__":

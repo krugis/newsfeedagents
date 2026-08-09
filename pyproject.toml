@@ -15,6 +15,7 @@ dependencies = [
     "pydantic-settings>=2.4",
     "python-dotenv>=1.0",
     "sqlalchemy>=2.0",
+    "tenacity>=8.2",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +34,9 @@ packages = ["src/newspipe"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "live: integration tests that hit real network endpoints (run with --live)",
+]
 
 [tool.ruff]
 line-length = 100

@@ -27,20 +27,36 @@ uv run pytest                 # smoke test: tables exist
 
 ```bash
 uv run python -m newspipe migrate   # apply pending migrations
-# (fetch / dedup / label / run / status added in later sub-phases)
+uv run python -m newspipe fetch     # poll every due source once (prints per-source counts)
+uv run python scripts/seed_sources.py  # (idempotent) insert the Phase 1 source registry
 ```
+
+Tests: `uv run pytest` (offline, DB required). Live network tests are marked
+`@pytest.mark.live` and run with `uv run pytest --live`.
 
 ## Layout
 
 ```
 src/newspipe/
   config.py        # pydantic-settings, all env-driven
+  fetch.py         # fetch runner (per-source isolation, run stats)
   db/engine.py     # SQLAlchemy engine factory
   db/migrate.py    # tiny SQL-file migration runner
   db/migrations/   # plain-SQL migrations (0001_initial.sql, ...)
-  models/schemas.py# Pydantic domain models
-tests/             # pytest suite
+  db/sources.py    # due-source selection
+  db/arrivals.py   # idempotent arrival persistence
+  fetchers/        # one fetcher per method type (base/rss/hn_algolia/google_news_rss)
+  models/schemas.py# Pydantic domain models (RawItem, Source)
+scripts/seed_sources.py  # Phase 1 source registry (idempotent upsert)
+tests/             # pytest suite; tests/fixtures/ holds recorded responses
 ```
+
+## Sources
+
+The Phase 1 registry is seeded by `scripts/seed_sources.py`. **Anthropic Blog
+is seeded disabled**: Anthropic publishes no official RSS feed (verified at
+build time), so there is no feed URL to poll. Enable it once a feed is chosen
+(e.g. a community mirror) or a scraper is built (Phase 2+).
 
 ## Database
 

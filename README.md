@@ -8,7 +8,7 @@ APScheduler.
 ## Stack
 
 - Python 3.11+ (managed with `uv`), ruff, pytest
-- LangGraph + langchain-core + langchain-anthropic (labeling)
+- LangGraph + langchain-core + langchain-deepseek (labeling)
 - Postgres 16 via Docker Compose; SQLAlchemy Core + psycopg
 - APScheduler, feedparser, httpx
 
@@ -72,7 +72,7 @@ content, and embedding-based dedup is a Phase 2 item.
 
 `python -m newspipe label` selects stories without a labels row and labels them
 in batches (`max_concurrency` from `BATCH_CONCURRENCY`). The chain is
-`init_chat_model(claude-sonnet-4-6, provider=anthropic).with_structured_output(HeadlineLabel).with_retry()`
+`init_chat_model(deepseek-chat, provider=deepseek).with_structured_output(HeadlineLabel).with_retry()`
 with prompt version `p1` stored in `labels.prompt_version`. The prompt receives
 title, source names, arrival_count, and hn_front_page, and treats cross-source
 arrival as an explicit importance signal. A story that fails labeling stays

@@ -23,8 +23,8 @@ from newspipe.labeling.schema import HeadlineLabel
 
 class _FakeSettings:
     def __init__(self, api_key: str, model: str, concurrency: int = 2) -> None:
-        self.anthropic_api_key = api_key
-        self.anthropic_model = model
+        self.deepseek_api_key = api_key
+        self.deepseek_model = model
         self.batch_concurrency = concurrency
 
 
@@ -115,7 +115,7 @@ def test_build_chain_uses_structured_output_and_retry(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr("newspipe.labeling.labeler.init_chat_model", fake_init_chat_model)
     build_chain(api_key="test-key")
-    assert calls["init"] == [("claude-sonnet-4-6", "anthropic")]
+    assert calls["init"] == [("deepseek-chat", "deepseek")]
     assert calls["structured"] == [HeadlineLabel]
     assert calls["retry"] == [True]
 
@@ -159,14 +159,14 @@ def test_select_and_persist_labels_end_to_end(monkeypatch: pytest.MonkeyPatch) -
         fake = FakeChain([label])
         monkeypatch.setattr(
             "newspipe.labeling.labeler.get_settings",
-            lambda: _FakeSettings(api_key="x", model="claude-sonnet-4-6", concurrency=2),
+            lambda: _FakeSettings(api_key="x", model="deepseek-chat", concurrency=2),
         )
         results = asyncio.run(_label_batch(fake, test_contexts))
         assert set(results) == set(story_ids)
 
         # 3. persistence
         with engine.begin() as conn:
-            persist_labels(conn, results, "claude-sonnet-4-6")
+            persist_labels(conn, results, "deepseek-chat")
 
         with engine.connect() as conn:
             rows = conn.execute(
@@ -182,7 +182,7 @@ def test_select_and_persist_labels_end_to_end(monkeypatch: pytest.MonkeyPatch) -
             assert row["importance"] == 8
             assert row["category"] == "model_release"
             assert row["is_genai_ml_relevant"] is True
-            assert row["model"] == "claude-sonnet-4-6"
+            assert row["model"] == "deepseek-chat"
             assert row["prompt_version"] == PROMPT_VERSION
 
         # 4. labeled stories are no longer selected

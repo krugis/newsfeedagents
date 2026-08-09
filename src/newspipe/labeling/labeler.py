@@ -1,10 +1,11 @@
 """LLM labeling: batch labeling of unlabeled stories.
 
 The chain is ``init_chat_model(...).with_structured_output(HeadlineLabel)``
-wrapped in ``.with_retry()``. Prompt is a versioned constant stored into
-``labels.prompt_version``. Cross-source arrival is an explicit importance
-signal in the prompt. A story that fails labeling stays unlabeled (picked up
-next run) and never blocks the rest of the batch.
+wrapped in ``.with_retry()``. The provider/model are env-driven
+(``DEEPSEEK_MODEL`` via langchain-deepseek). Prompt is a versioned constant
+stored into ``labels.prompt_version``. Cross-source arrival is an explicit
+importance signal in the prompt. A story that fails labeling stays unlabeled
+(picked up next run) and never blocks the rest of the batch.
 """
 
 from __future__ import annotations
@@ -67,9 +68,9 @@ class StoryContext(BaseModel):
 def build_chain(api_key: str | None = None) -> Runnable:
     """Build the structured-output labeling chain with retries."""
     settings = get_settings()
-    key = api_key if api_key is not None else settings.anthropic_api_key
+    key = api_key if api_key is not None else settings.deepseek_api_key
     model: BaseChatModel = init_chat_model(
-        settings.anthropic_model, model_provider="anthropic", api_key=key
+        settings.deepseek_model, model_provider="deepseek", api_key=key
     )
     return model.with_structured_output(HeadlineLabel).with_retry()
 
@@ -157,7 +158,7 @@ def select_unlabeled_stories(conn, limit: int | None = None) -> list[StoryContex
 def run_label(limit: int | None = None, chain: Runnable | None = None) -> dict:
     """Label up to ``limit`` unlabeled stories end-to-end (sync wrapper)."""
     settings = get_settings()
-    if not settings.anthropic_api_key:
+    if not settings.deepseek_api_key:
         return {"skipped": True}
     used_chain = chain or build_chain()
     engine = get_engine()
@@ -166,7 +167,7 @@ def run_label(limit: int | None = None, chain: Runnable | None = None) -> dict:
     results = asyncio.run(_label_batch(used_chain, contexts))
     labeled = 0
     with engine.begin() as conn:
-        labeled = persist_labels(conn, results, settings.anthropic_model)
+        labeled = persist_labels(conn, results, settings.deepseek_model)
     return {
         "skipped": False,
         "selected": len(contexts),

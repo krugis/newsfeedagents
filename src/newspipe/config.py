@@ -20,8 +20,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     database_url: str = _DEFAULT_DATABASE_URL
-    anthropic_api_key: str | None = None
-    anthropic_model: str = "claude-sonnet-4-6"
+    deepseek_api_key: str | None = None
+    deepseek_model: str = "deepseek-chat"
     batch_concurrency: int = Field(default=5, ge=1, le=64)
 
     @property

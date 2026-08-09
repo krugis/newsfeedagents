@@ -72,7 +72,10 @@ select_due_sources -> [Send fan-out: fetch_source per source] -> dedup -> label 
   and creates/touches the `pipeline_runs` row (`status='running'`).
 - `fetch_source` (one Send per source) fetches + persists arrivals and never
   raises; per-source errors accumulate in `state.errors`.
-- `dedup` / `label` are thin wrappers over the 1.2/1.3 functions.
+- `dedup` / `label` are thin wrappers over the 1.2/1.3 functions. Labeling is
+  capped at `LABEL_LIMIT_PER_RUN` stories per run (default 100) so a large
+  backlog drains over successive runs instead of one giant batch; the manual
+  `python -m newspipe label` CLI is uncapped unless you pass `--limit N`.
 - `finalize` writes status, stats (per-source counts, new/updated stories,
   labeled, errors, duration) into `pipeline_runs`.
 
@@ -86,6 +89,10 @@ demo hook (`NEWSPIPE_CRASH_AFTER_FETCH=1`) makes the label node raise to
 simulate a mid-run process death. LangSmith tracing is enabled purely via
 env vars (`LANGCHAIN_TRACING_V2=true`, `LANGCHAIN_API_KEY`, ...); zero code
 coupling.
+
+> Note: `python -m newspipe run --thread <id>` (a fresh run on an explicit
+> thread id, in addition to the spec's `--resume`) was added for the gate 1.4
+> kill-and-resume demo. It is mutually exclusive with `--resume`.
 
 ## Dedup v1 (exact match)
 

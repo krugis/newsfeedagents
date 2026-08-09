@@ -56,7 +56,7 @@ def _test_only_sources(conn, source_ids: list[int] | None = None) -> list[Source
     return [Source(**dict(row)) for row in rows]
 
 
-def _skip_label():
+def _skip_label(limit: int | None = None, chain=None) -> dict:
     return {
         "skipped": True,
         "selected": 0,

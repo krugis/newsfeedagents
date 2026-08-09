@@ -138,7 +138,8 @@ def label_node(state: PipelineState) -> dict:
     """Thin wrapper over 1.3's labeling; crash hook for the resume demo."""
     if os.environ.get("NEWSPIPE_CRASH_AFTER_FETCH") == "1":
         raise RuntimeError("simulated crash after fetch (NEWSPIPE_CRASH_AFTER_FETCH=1)")
-    res = run_label()
+    settings = get_settings()
+    res = run_label(limit=settings.label_limit_per_run)
     return {
         "labeled_story_ids": list(res.get("results", {}).keys()),
         "stats": {
@@ -148,6 +149,7 @@ def label_node(state: PipelineState) -> dict:
                 "selected": res.get("selected", 0),
                 "labeled": res.get("labeled", 0),
                 "failed": res.get("failed", 0),
+                "limit": settings.label_limit_per_run,
             },
         },
     }

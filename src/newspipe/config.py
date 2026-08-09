@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     deepseek_api_key: str | None = None
     deepseek_model: str = "deepseek-chat"
     batch_concurrency: int = Field(default=5, ge=1, le=64)
+    label_limit_per_run: int = Field(default=100, ge=0)
 
     @property
     def sqlalchemy_url(self) -> str:

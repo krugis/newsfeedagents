@@ -1,6 +1,7 @@
-"""APScheduler hourly scheduling of the pipeline graph.
+"""APScheduler scheduling of the pipeline graph.
 
-BlockingScheduler with a cron trigger at minute 5 (UTC),
+BlockingScheduler with a cron expression from ``SCHEDULE_CRON`` (default
+every 12 hours at 00:05 and 12:05 UTC, configurable),
 ``max_instances=1``, ``coalesce=True``, ``misfire_grace_time=600`` so two
 runs can never overlap and missed runs coalesce into one. Each tick invokes
 the graph with the hour-slot thread id.
@@ -65,9 +66,10 @@ def run_scheduled_once() -> dict | None:
 
 def build_scheduler() -> BlockingScheduler:
     scheduler = BlockingScheduler(timezone="UTC")
+    settings = get_settings()
     scheduler.add_job(
         run_scheduled_once,
-        CronTrigger(minute=5, timezone="UTC"),
+        CronTrigger.from_crontab(settings.schedule_cron, timezone="UTC"),
         id="hourly_pipeline",
         max_instances=1,
         coalesce=True,
@@ -82,6 +84,8 @@ def main() -> None:
     configure_logging(logging.INFO)
     scheduler = build_scheduler()
     logger.info(
-        "scheduler started (cron minute 5 hourly, max_instances=1, coalesce, misfire_grace 600s)"
+        "scheduler started "
+        f"(cron {get_settings().schedule_cron!r} UTC, "
+        "max_instances=1, coalesce, misfire_grace 600s)"
     )
     scheduler.start()

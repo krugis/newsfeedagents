@@ -99,10 +99,11 @@ coupling.
 ## Scheduler + logging
 
 `python -m newspipe schedule` runs an APScheduler `BlockingScheduler` with a
-cron trigger at **minute 5 hourly (UTC)**, `max_instances=1`,
-`coalesce=True`, `misfire_grace_time=600`. Each tick invokes the graph with
-the hour-slot thread id (`run-YYYYMMDD-HH`), so two runs can never overlap
-and a missed run coalesces into one.
+cron expression from **`SCHEDULE_CRON`** (default `5 0,12 * * *` = every
+12 hours at 00:05 and 12:05 UTC; configurable, e.g. `5 * * * *` for hourly),
+`max_instances=1`, `coalesce=True`, `misfire_grace_time=600`. Each tick
+invokes the graph with the hour-slot thread id (`run-YYYYMMDD-HH`), so two
+runs can never overlap and a missed run coalesces into one.
 
 Logging is structured JSON lines to stdout and to a rotating file
 (`logs/newspipe.log`, 10 MB x 5 backups). Per-run summaries are logged at

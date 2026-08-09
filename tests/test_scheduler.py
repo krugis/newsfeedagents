@@ -20,3 +20,6 @@ def test_scheduler_registers_one_hourly_job_with_hardening() -> None:
     assert isinstance(trigger, CronTrigger)
     minute_field = next(f for f in trigger.fields if f.name == "minute")
     assert minute_field.expressions[0].first == 5
+    hour_field = next(f for f in trigger.fields if f.name == "hour")
+    # default SCHEDULE_CRON "5 0,12 * * *" -> runs at hours 0 and 12 (every 12h)
+    assert [e.first for e in hour_field.expressions] == [0, 12]

@@ -41,6 +41,7 @@ def test_required_indexes_exist(engine: Engine) -> None:
         "idx_arrivals_url_canonical",
         "idx_arrivals_story_id",
         "idx_stories_first_seen_at",
+        "idx_stories_title_hash",
         "idx_labels_story_labeled_at",
     }
     with engine.connect() as conn:

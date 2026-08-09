@@ -34,6 +34,18 @@ def cmd_fetch(_args: argparse.Namespace) -> None:
             print(f"  {name}: {err}")
 
 
+def cmd_dedup(_args: argparse.Namespace) -> None:
+    from newspipe.dedup import run_dedup
+
+    stats = run_dedup()
+    print(f"arrivals processed: {stats['arrivals_processed']}")
+    print(f"stories created:    {stats['stories_created']}")
+    print(f"stories updated:    {stats['stories_updated']}")
+    print(f"arrivals attached:  {stats['attachments']}")
+    if stats["errors"]:
+        print(f"errors:             {stats['errors']}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="newspipe", description="GenAI/ML news ingestion pipeline"
@@ -41,12 +53,15 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("migrate", help="Apply pending DB migrations")
     subparsers.add_parser("fetch", help="Run all due fetchers once")
+    subparsers.add_parser("dedup", help="Storify all unattached arrivals")
 
     args = parser.parse_args()
     if args.command == "migrate":
         cmd_migrate(args)
     elif args.command == "fetch":
         cmd_fetch(args)
+    elif args.command == "dedup":
+        cmd_dedup(args)
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ uv run pytest                 # smoke test: tables exist
 ```bash
 uv run python -m newspipe migrate   # apply pending migrations
 uv run python -m newspipe fetch     # poll every due source once (prints per-source counts)
+uv run python -m newspipe dedup     # storify all unattached arrivals (normalize + dedup v1)
 uv run python scripts/seed_sources.py  # (idempotent) insert the Phase 1 source registry
 ```
 
@@ -40,9 +41,11 @@ Tests: `uv run pytest` (offline, DB required). Live network tests are marked
 src/newspipe/
   config.py        # pydantic-settings, all env-driven
   fetch.py         # fetch runner (per-source isolation, run stats)
+  normalize.py     # URL canonicalization + title normalization/hash
+  dedup.py         # dedup v1: canonical-URL then title-hash (72h window), advisory-locked
   db/engine.py     # SQLAlchemy engine factory
   db/migrate.py    # tiny SQL-file migration runner
-  db/migrations/   # plain-SQL migrations (0001_initial.sql, ...)
+  db/migrations/   # plain-SQL migrations (0001_initial.sql, 0002_stories_title_hash.sql, ...)
   db/sources.py    # due-source selection
   db/arrivals.py   # idempotent arrival persistence
   fetchers/        # one fetcher per method type (base/rss/hn_algolia/google_news_rss)
@@ -50,6 +53,18 @@ src/newspipe/
 scripts/seed_sources.py  # Phase 1 source registry (idempotent upsert)
 tests/             # pytest suite; tests/fixtures/ holds recorded responses
 ```
+
+## Dedup v1 (exact match)
+
+`python -m newspipe dedup` storifies every unattached arrival. Matching is
+exact-match only (no embeddings): first by `url_canonical`, then by
+`title_hash` within 72h of `stories.first_seen_at`. A match increments
+`arrival_count`, updates `last_seen_at`, and sets `hn_front_page` when the
+arrival was on the HN front page. The whole pass holds a Postgres advisory
+xact lock (fixed key) so concurrent dedup runs serialize. Note: identical
+titles in different articles (e.g. OpenAI's repeated "Team update" posts)
+collapse into one story by design in v1; LLM labeling can differentiate
+content, and embedding-based dedup is a Phase 2 item.
 
 ## Sources
 

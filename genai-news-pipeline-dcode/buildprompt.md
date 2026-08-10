@@ -17,7 +17,7 @@ Never merge sub-phases, never work ahead "while waiting," never silently expand 
 
 ## Environment and constraints
 
-- **Working directory:** create a new project folder at `/home/agate/genai-news-pipeline-dcode`. All code lives there.
+- **Working directory:** create a new project folder at `/home/agate/newsfeedagents/genai-news-pipeline-dcode`. All code lives there.
 - **Language/stack:** Python 3.11+, managed with `uv` (fall back to `venv` + `pip` if `uv` unavailable). LangGraph + langchain-core + langchain-anthropic for orchestration and labeling. Postgres for storage (check if a local Postgres is running; if not, set one up via Docker Compose in the project — ask me at the Gate 1.0 if you're unsure which I prefer). `psycopg` / SQLAlchemy Core for relational access. APScheduler for scheduling. `feedparser` + `httpx` for fetching.
 - **Secrets:** all config via `.env` (python-dotenv), never hardcoded. Create `.env.example` documenting every variable. I will fill in `ANTHROPIC_API_KEY` and DB credentials myself — if a key is missing, build everything and mock/skip only the affected call in tests; do not invent keys.
 - **LLM for labeling:** `claude-sonnet-4-6` via `langchain-anthropic`, using `.with_structured_output()`.
@@ -47,7 +47,7 @@ Verify each feed URL actually resolves at build time; if one is wrong/moved, fin
 
 **Deliverables:**
 
-1. Project skeleton at `/home/agate/genai-news-pipeline-dcode`:
+1. Project skeleton at `/home/agate/newsfeedagents/genai-news-pipeline-dcode`:
    ```
    pyproject.toml, .env.example, .gitignore, README.md
    docker-compose.yml            # Postgres 16 (if no local PG — confirm at gate)

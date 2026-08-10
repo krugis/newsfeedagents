@@ -15,7 +15,7 @@ APScheduler.
 ## Setup from scratch
 
 ```bash
-cd /home/agate/genai-news-pipeline-dcode
+cd /home/agate/newsfeedagents/genai-news-pipeline-dcode
 uv sync --all-extras          # create .venv and install deps
 cp .env.example .env          # edit .env: DATABASE_URL, DEEPSEEK_API_KEY
 docker-compose up -d          # start Postgres 16 (localhost only)

@@ -4,9 +4,9 @@ Hourly ingestion of GenAI/ML news: fetch from zero-auth sources → normalize �
 deduplicate → label with an LLM → persist to Postgres, orchestrated by LangGraph
 with durable checkpointing.
 
-**Status:** Phase 1, gated build. Currently at **Gate 1.1** (fetchers + source
-seeding). The remaining sub-phases (dedup, labeling, graph, scheduler) build on
-this and land one at a time at their respective gates.
+**Status:** Phase 1, gated build. Currently at **Gate 1.2** (normalization +
+dedup v1). The remaining sub-phases (labeling, graph, scheduler) build on this
+and land one at a time at their respective gates.
 
 ## Stack
 
@@ -39,6 +39,8 @@ docker-compose.yml      # Postgres 16 (port 5433, data in a named volume)
 src/newspipe/
   __main__.py           # CLI dispatch (`python -m newspipe <command>`)
   config.py             # pydantic-settings, all env-driven
+  normalize.py          # URL + title canonicalization (title_hash)
+  dedup.py              # dedup v1: canonical-URL then 72h title-hash match
   fetch.py              # `fetch` orchestration (per-source isolation)
   seeding.py            # Phase 1 source registry seed data
   db/
@@ -72,8 +74,30 @@ tests/
 | Command | Purpose |
 |---|---|
 | `python -m newspipe fetch` | Fetch all due sources once; prints per-source counts (fetched/new). Never breaks on one source's failure. |
+| `python -m newspipe dedup` | Deduplicate all unattached arrivals into stories (canonical URL, then 72h title-hash). Race-safe via advisory lock. |
 | `python -m newspipe.db.migrate` | Apply pending schema migrations (idempotent). |
 | `python scripts/seed_sources.py` | Upsert the Phase 1 source registry (idempotent). |
+
+## Dedup v1
+
+Exact-match only (no embeddings):
+
+1. **Canonical URL** — lowercase host, `http→https`, strips `utm_*`/`fbclid`/
+   tracking params and fragments, trailing-slash policy.
+2. **Title-hash within 72h** of `stories.first_seen_at` (sha256 of the
+   NFKC-normalized, whitespace-collapsed title).
+3. Match → attach the arrival, bump `arrival_count`, update `last_seen_at`, set
+   `hn_front_page` if flagged. Miss → create a new story.
+
+Race-safety: the whole run is one transaction guarded by a Postgres advisory
+lock (`pg_advisory_xact_lock`), so concurrent dedup runs can't create duplicate
+stories. The two-key lookup isn't expressible as a pure upsert, so a lock is
+the simple, correct choice.
+
+**Known v1 limitation:** a publisher that reuses an identical title for distinct
+posts within 72h will false-positive collapse (observed: OpenAI's recurring
+"Team update" posts). Planned for later phases — smarter matching, not a
+change to v1.
 
 ## Sources
 

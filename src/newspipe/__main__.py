@@ -13,6 +13,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("fetch", help="fetch all due sources once (per-source counts)")
+    sub.add_parser("dedup", help="deduplicate unattached arrivals into stories")
 
     args = parser.parse_args(argv)
 
@@ -20,6 +21,10 @@ def main(argv: list[str] | None = None) -> int:
         from newspipe import fetch
 
         return fetch.main()
+    if args.command == "dedup":
+        from newspipe import dedup
+
+        return dedup.main()
 
     parser.error(f"unknown command: {args.command!r}")
     return 2  # pragma: no cover

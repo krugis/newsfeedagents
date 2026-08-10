@@ -68,7 +68,9 @@ def test_rss_fetcher_parses_fixture(monkeypatch):
 
 def test_rss_external_ids_are_deterministic(monkeypatch):
     _stub_get_with_retry(monkeypatch, rss, {"techcrunch.com": "techcrunch_ai.xml"})
-    src = _source("rss", {"feed_url": "https://techcrunch.com/category/artificial-intelligence/feed/"})
+    src = _source(
+        "rss", {"feed_url": "https://techcrunch.com/category/artificial-intelligence/feed/"}
+    )
     first = rss.fetch(src)
     second = rss.fetch(src)
     assert [i.external_id for i in first] == [i.external_id for i in second]

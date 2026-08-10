@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-Method = Literal["rss", "hn_algolia", "google_news_rss"]
+Method = Literal["rss", "hn_algolia", "google_news_rss", "sitemap"]
 Category = Literal[
     "model_release",
     "research",

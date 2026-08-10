@@ -5,6 +5,8 @@ description = "Phase 1 of an hourly GenAI/ML news ingestion pipeline"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "feedparser>=6,<7",
+    "httpx>=0.27,<1",
     "psycopg[binary]>=3.1,<4",
     "pydantic>=2.7,<3",
     "pydantic-settings>=2.3,<3",
@@ -34,4 +36,11 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q -m 'not live'"
+markers = [
+    "live: integration tests that hit live network endpoints (run with -m live)",
+]
+filterwarnings = [
+    # feedparser's benign updated->published fallback mapping (issue 310)
+    "ignore:To avoid breaking existing software.*:DeprecationWarning",
+]

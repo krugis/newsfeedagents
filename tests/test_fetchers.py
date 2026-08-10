@@ -107,7 +107,8 @@ def test_hn_marks_front_page_hits(monkeypatch):
 
 
 def test_hn_window_uses_last_polled_at(monkeypatch):
-    last = datetime(2026, 8, 9, 12, 0, tzinfo=UTC)
+    # 2h ago, so the 24h cap never kicks in regardless of wall-clock date.
+    last = datetime.now(UTC) - timedelta(hours=2)
     captured: dict = {}
 
     def fake(client, url, *, params=None):

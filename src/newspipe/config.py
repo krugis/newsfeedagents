@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     model_name: str = "claude-sonnet-4-6"
     batch_concurrency: int = 8
+    # Cap on how many unlabeled stories a single `label` run will label, so a
+    # backfill burst never blows the API budget in one shot.
+    label_limit_per_run: int = 100
 
 
 @lru_cache

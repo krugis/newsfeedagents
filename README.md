@@ -4,9 +4,9 @@ Hourly ingestion of GenAI/ML news: fetch from zero-auth sources → normalize �
 deduplicate → label with an LLM → persist to Postgres, orchestrated by LangGraph
 with durable checkpointing.
 
-**Status:** Phase 1, gated build. Currently at **Gate 1.2** (normalization +
-dedup v1). The remaining sub-phases (labeling, graph, scheduler) build on this
-and land one at a time at their respective gates.
+**Status:** Phase 1, gated build. Currently at **Gate 1.3** (LLM labeling).
+The remaining sub-phases (graph, scheduler) build on this and land one at a
+time at their respective gates.
 
 ## Stack
 
@@ -14,8 +14,9 @@ and land one at a time at their respective gates.
 - Postgres 16 (Docker Compose, host port **5433**)
 - psycopg 3 + Pydantic / pydantic-settings
 - feedparser + httpx (fetching)
-- Coming in later gates: LangGraph + langchain-core + langchain-anthropic
-  (labeling/orchestration), APScheduler (scheduling).
+- langchain-anthropic + langchain-core (labeling via structured output)
+- Coming in later gates: LangGraph (orchestration/checkpointing), APScheduler
+  (scheduling).
 
 ## Quickstart
 
@@ -43,12 +44,16 @@ src/newspipe/
   dedup.py              # dedup v1: canonical-URL then 72h title-hash match
   fetch.py              # `fetch` orchestration (per-source isolation)
   seeding.py            # Phase 1 source registry seed data
+  labeling/
+    schema.py           # HeadlineLabel — the structured-output contract
+    labeler.py          # prompt v1 + batch labeling over unlabeled stories
   db/
     engine.py           # psycopg connection management
     migrate.py          # tiny SQL migration runner
     migrations/         # 0001_initial.sql, 0002_sources_method_sitemap.sql
     sources.py          # source registry queries + upsert
     arrivals.py         # idempotent arrivals persistence
+    labels.py           # select unlabeled stories + insert label rows
   fetchers/             # one fetcher per method type
     base.py             # RawItem, shared httpx client, bounded retry
     rss.py              # feedparser-based RSS/Atom
@@ -67,6 +72,7 @@ tests/
   test_fetchers.py      # per-fetcher unit tests (fixtures)
   test_fetchers_live.py # live integration tests (marked `live`)
   test_fetch.py         # seeding + arrivals idempotency + due-source logic
+  test_labeling.py      # schema/prompt/persistence + mocked batch + live label
 ```
 
 ## CLI
@@ -75,6 +81,7 @@ tests/
 |---|---|
 | `python -m newspipe fetch` | Fetch all due sources once; prints per-source counts (fetched/new). Never breaks on one source's failure. |
 | `python -m newspipe dedup` | Deduplicate all unattached arrivals into stories (canonical URL, then 72h title-hash). Race-safe via advisory lock. |
+| `python -m newspipe label` | Label unlabeled stories with the LLM; prints a table of the new labels. `--limit` caps the batch (default `LABEL_LIMIT_PER_RUN`). |
 | `python -m newspipe.db.migrate` | Apply pending schema migrations (idempotent). |
 | `python scripts/seed_sources.py` | Upsert the Phase 1 source registry (idempotent). |
 
@@ -99,6 +106,33 @@ posts within 72h will false-positive collapse (observed: OpenAI's recurring
 "Team update" posts). Planned for later phases — smarter matching, not a
 change to v1.
 
+## Labeling
+
+Each unlabeled story is labeled with `claude-sonnet-4-6` via structured output
+(`HeadlineLabel`), so the model must return exactly:
+
+```python
+is_hot: bool                       # major/breaking event vs routine
+importance: int  # 1..10
+category: Literal[model_release, research, industry, funding,
+                  policy_regulation, tooling_infra, other]
+is_genai_ml_relevant: bool         # filters non-AI items from broad feeds
+rationale: str                     # one sentence
+```
+
+The prompt (version `p1`, stored in `labels.prompt_version`) receives the
+title, the **source names** it arrived from, `arrival_count`, and
+`hn_front_page` — the prompt states that **cross-source arrival is an explicit
+importance signal**. Stories are labeled in batches via `.abatch` with
+`max_concurrency` from config and `.with_retry()`; a story that fails labeling
+stays unlabeled and is retried on the next run, never blocking the batch. One
+`labels` row is written per story per labeling (so relabeling / evals can be
+added later without touching `stories`).
+
+```bash
+uv run python -m newspipe label --limit 10   # label up to 10 oldest unlabeled
+```
+
 ## Sources
 
 Seeded from `src/newspipe/seeding.py` (exactly the Phase 1 list). Verified live
@@ -117,9 +151,10 @@ Every setting lives in `.env` (see `.env.example` for the full list):
 | Variable            | Default                                               | Purpose                    |
 |---------------------|-------------------------------------------------------|----------------------------|
 | `DATABASE_URL`      | `postgresql://newspipe:newspipe@localhost:5433/newspipe` | Postgres connection URL |
-| `ANTHROPIC_API_KEY` | *(empty)*                                             | LLM labeling (Gate 1.3)    |
+| `ANTHROPIC_API_KEY` | *(empty)*                                             | LLM labeling               |
 | `MODEL_NAME`        | `claude-sonnet-4-6`                                   | Labeling model             |
 | `BATCH_CONCURRENCY` | `8`                                                   | Max concurrent LLM calls   |
+| `LABEL_LIMIT_PER_RUN` | `100`                                               | Cap on unlabeled stories labeled per `label` run (backfill guard) |
 
 ## Database schema
 

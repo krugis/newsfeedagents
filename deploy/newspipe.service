@@ -7,9 +7,9 @@ Wants=network-online.target
 Type=simple
 # Runs as the user who installs/enables the unit (root on this box).
 # Working dir must contain the project; .env holds DATABASE_URL + DEEPSEEK_API_KEY.
-WorkingDirectory=/home/agate/genai-news-pipeline
-EnvironmentFile=/home/agate/genai-news-pipeline/.env
-ExecStart=/home/agate/genai-news-pipeline/.venv/bin/python -m newspipe schedule
+WorkingDirectory=/home/agate/genai-news-pipeline-dcode
+EnvironmentFile=/home/agate/genai-news-pipeline-dcode/.env
+ExecStart=/home/agate/genai-news-pipeline-dcode/.venv/bin/python -m newspipe schedule
 Restart=on-failure
 RestartSec=10
 

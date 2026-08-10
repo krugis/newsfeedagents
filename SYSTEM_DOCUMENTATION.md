@@ -125,6 +125,37 @@ tiny runner in filename order within one transaction each.
 normalization, labeling (mocked chain + live), graph crash-resume
 acceptance, scheduler config, logging, status.
 
+### 1.8 Tech stack
+
+| Layer | Choice |
+|---|---|
+| Language / runtime | Python 3.11+ (managed with `uv`; `.python-version` pins 3.12) |
+| Orchestration | LangGraph (StateGraph + Send fan-out) with `PostgresSaver` checkpoints |
+| LLM labeling | langchain-core + `init_chat_model(deepseek-chat, provider=deepseek)` via langchain-deepseek, `.with_structured_output(HeadlineLabel)` |
+| Database | Postgres 16 (Docker Compose, localhost-only), SQLAlchemy Core + psycopg[binary], langgraph-checkpoint-postgres |
+| Scheduling | APScheduler `BlockingScheduler` (cron from `SCHEDULE_CRON`), systemd unit |
+| Ingestion | feedparser (RSS), httpx (HN Algolia API, Google News RSS), custom fetcher base with bounded retry |
+| Config / typing | pydantic-settings, python-dotenv, Pydantic v2 models |
+| Tooling | ruff (lint), pytest (+ `--live` marker), hatchling build backend |
+
+### 1.9 Codebase metrics (lines of code)
+
+Actual counts as of the last commit (excludes `.venv/`, `.git/`, caches, logs):
+
+| Area | Files | Lines |
+|---|---|---|
+| Application (`src/newspipe/`) | 27 | 1,619 |
+| Tests (`tests/`) | 15 | 1,453 |
+| **Python total** | 42 | **3,072** |
+| SQL migrations (`src/newspipe/db/migrations/`) | 3 | 67 |
+| Seed script (`scripts/seed_sources.py`) | 1 | 97 |
+| Ops/config (pyproject.toml, docker-compose.yml, systemd unit, .gitignore, .python-version) | 5 | 109 |
+| Docs (README.md, SYSTEM_DOCUMENTATION.md, buildprompt.md) | 3 | 573 |
+
+By application module (`src/newspipe/`): graph 264, fetchers 282, labeling
+206, db 152, models 34, top-level modules (cli, config, normalize, dedup,
+scheduler, status, logging, fetch) 681. ~10 commits total.
+
 ---
 
 ## 2. Development time
@@ -149,16 +180,23 @@ Git commit timeline (build-order evidence):
 
 Note: the 4.5h includes the required gate pauses while awaiting user
 approval between sub-phases; active implementation was continuous during
-each sub-phase. Code volume ≈ 2,900 lines (src + tests), 9 commits.
+each sub-phase. Code volume ≈ 3,072 lines of Python (1,619 src + 1,453
+tests), 10 commits.
 
 ---
 
-## 3. Token usage (estimate)
+## 3. Token usage (actual session telemetry)
 
-I do not have exact telemetry for this session, so this is an honest
-estimate based on conversation length, ~100+ tool calls (file reads/writes,
-shell commands, DB queries, live fetch/label runs), and the volume of code
-produced:
+Usage stats for the agent session that built the project:
+
+| Provider | Model | Requests | Input Tokens | Output Tokens | Cost |
+|---|---|---|---|---|---|
+| deepseek | deepseek-v4-flash | 322 | 40.2M | 235.1K | $0.22 |
+
+Agent active time: **4h 23m 53s**.
+
+(The earlier estimate below is kept for reference only; the table above is
+the exact platform figure.)
 
 - **Estimated total tokens processed across the session (input + output +
   tool results): ~400K–550K** (model context window: 1M).
@@ -166,6 +204,3 @@ produced:
   live-run outputs, tracebacks during debugging).
 - Code written/reviewed ≈ 3,000 lines across the repo, which is the bulk of
   the output tokens.
-
-This is a coarse estimate; the platform's billing/usage dashboard, if
-available, has the exact figure.

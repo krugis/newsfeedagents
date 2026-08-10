@@ -17,8 +17,12 @@ class Settings(BaseSettings):
     )
 
     database_url: str = "postgresql://newspipe:newspipe@localhost:5433/newspipe"
-    anthropic_api_key: str | None = None
-    model_name: str = "claude-sonnet-4-6"
+    # DeepSeek (OpenAI-compatible API). `deepseek-chat` = DeepSeek-V3, the
+    # cost-effective model; `deepseek-reasoner` (R1) is pricier per token and
+    # overkill for one-sentence labeling.
+    deepseek_api_key: str | None = None
+    deepseek_base_url: str = "https://api.deepseek.com"
+    model_name: str = "deepseek-chat"
     batch_concurrency: int = 8
     # Cap on how many unlabeled stories a single `label` run will label, so a
     # backfill burst never blows the API budget in one shot.

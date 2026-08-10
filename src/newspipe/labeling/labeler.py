@@ -14,7 +14,7 @@ import logging
 import sys
 from dataclasses import dataclass, field
 
-from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 
 from newspipe.config import get_settings
 from newspipe.db.engine import connect
@@ -63,12 +63,16 @@ class LabelStats:
 def build_labeler():
     """A structured-output chat model for labeling, with transient retries."""
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set — set it in .env to label")
-    model = ChatAnthropic(
+    if not settings.deepseek_api_key:
+        raise RuntimeError("DEEPSEEK_API_KEY is not set — set it in .env to label")
+    # DeepSeek's OpenAI-compatible API does not support json_schema response
+    # format, so force function_calling: the schema is carried as a tool the
+    # model must call, which enforces field conformance better than json_mode.
+    model = ChatOpenAI(
         model=settings.model_name,
-        api_key=settings.anthropic_api_key,
-    ).with_structured_output(HeadlineLabel)
+        api_key=settings.deepseek_api_key,
+        base_url=settings.deepseek_base_url,
+    ).with_structured_output(HeadlineLabel, method="function_calling")
     return model.with_retry()
 
 
@@ -101,8 +105,8 @@ def label_unlabeled(limit: int | None = None, story_ids: list[int] | None = None
     failed story never blocks the rest of the batch.
     """
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set — set it in .env to label")
+    if not settings.deepseek_api_key:
+        raise RuntimeError("DEEPSEEK_API_KEY is not set — set it in .env to label")
     with connect() as conn:
         stories = select_unlabeled_stories(conn, limit=limit, story_ids=story_ids)
         stats = LabelStats(stories_attempted=len(stories))

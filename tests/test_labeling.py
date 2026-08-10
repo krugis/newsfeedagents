@@ -17,7 +17,7 @@ from newspipe.labeling.schema import HeadlineLabel
 @pytest.fixture
 def fake_api_key(monkeypatch):
     """Let labeler code pass the API-key guard without hitting the network."""
-    patched = Settings(anthropic_api_key="test-key")
+    patched = Settings(deepseek_api_key="test-key")
     monkeypatch.setattr("newspipe.labeling.labeler.get_settings", lambda: patched)
 
 
@@ -303,9 +303,9 @@ def test_label_unlabeled_story_ids_filter(db_conn, source_scope, fake_api_key, m
 
 
 def test_label_unlabeled_requires_api_key(monkeypatch):
-    patched = Settings(anthropic_api_key=None)
+    patched = Settings(deepseek_api_key=None)
     monkeypatch.setattr("newspipe.labeling.labeler.get_settings", lambda: patched)
-    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
         label_unlabeled()
 
 
@@ -314,8 +314,8 @@ def test_label_unlabeled_requires_api_key(monkeypatch):
 
 @pytest.mark.live
 def test_label_three_stories_live(db_conn, source_scope):
-    if not get_settings().anthropic_api_key:
-        pytest.skip("ANTHROPIC_API_KEY not set — set it in .env to run live labeling")
+    if not get_settings().deepseek_api_key:
+        pytest.skip("DEEPSEEK_API_KEY not set — set it in .env to run live labeling")
     story_ids = _make_story(
         db_conn,
         source_scope,

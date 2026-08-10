@@ -14,14 +14,14 @@ time at their respective gates.
 - Postgres 16 (Docker Compose, host port **5433**)
 - psycopg 3 + Pydantic / pydantic-settings
 - feedparser + httpx (fetching)
-- langchain-anthropic + langchain-core (labeling via structured output)
+- langchain-openai + langchain-core (labeling via structured output, DeepSeek)
 - Coming in later gates: LangGraph (orchestration/checkpointing), APScheduler
   (scheduling).
 
 ## Quickstart
 
 ```bash
-cp .env.example .env          # then fill in ANTHROPIC_API_KEY when it exists
+cp .env.example .env          # then fill in DEEPSEEK_API_KEY when it exists
 docker-compose up -d          # start Postgres 16 on localhost:5433 (standalone docker-compose; the `docker compose` v2 plugin is not installed on this server)
 uv sync                       # create the venv and install the project
 uv run python -m newspipe.db.migrate   # apply schema migrations (idempotent)
@@ -108,7 +108,10 @@ change to v1.
 
 ## Labeling
 
-Each unlabeled story is labeled with `claude-sonnet-4-6` via structured output
+Each unlabeled story is labeled with `deepseek-chat` (DeepSeek-V3 — the
+cost-effective model; `deepseek-reasoner`/R1 is pricier and overkill for
+one-sentence labeling) via `ChatOpenAI` against DeepSeek's OpenAI-compatible
+endpoint, using structured output
 (`HeadlineLabel`), so the model must return exactly:
 
 ```python
@@ -151,8 +154,9 @@ Every setting lives in `.env` (see `.env.example` for the full list):
 | Variable            | Default                                               | Purpose                    |
 |---------------------|-------------------------------------------------------|----------------------------|
 | `DATABASE_URL`      | `postgresql://newspipe:newspipe@localhost:5433/newspipe` | Postgres connection URL |
-| `ANTHROPIC_API_KEY` | *(empty)*                                             | LLM labeling               |
-| `MODEL_NAME`        | `claude-sonnet-4-6`                                   | Labeling model             |
+| `DEEPSEEK_API_KEY`  | *(empty)*                                             | LLM labeling (DeepSeek)    |
+| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com`                           | OpenAI-compatible endpoint |
+| `MODEL_NAME`        | `deepseek-chat`                                      | Labeling model (cost-effective V3) |
 | `BATCH_CONCURRENCY` | `8`                                                   | Max concurrent LLM calls   |
 | `LABEL_LIMIT_PER_RUN` | `100`                                               | Cap on unlabeled stories labeled per `label` run (backfill guard) |
 

@@ -18,9 +18,9 @@ Never merge sub-phases, never work ahead "while waiting," never silently expand 
 ## Environment and constraints
 
 - **Working directory:** create a new project folder at `/home/agate/newsfeedagents/genai-news-pipeline-claudecode`. All code lives there.
-- **Language/stack:** Python 3.11+, managed with `uv` (fall back to `venv` + `pip` if `uv` unavailable). LangGraph + langchain-core + langchain-anthropic for orchestration and labeling. Postgres for storage (check if a local Postgres is running; if not, set one up via Docker Compose in the project — ask me at the Gate 1.0 if you're unsure which I prefer). `psycopg` / SQLAlchemy Core for relational access. APScheduler for scheduling. `feedparser` + `httpx` for fetching.
-- **Secrets:** all config via `.env` (python-dotenv), never hardcoded. Create `.env.example` documenting every variable. I will fill in `ANTHROPIC_API_KEY` and DB credentials myself — if a key is missing, build everything and mock/skip only the affected call in tests; do not invent keys.
-- **LLM for labeling:** `claude-sonnet-4-6` via `langchain-anthropic`, using `.with_structured_output()`.
+- **Language/stack:** Python 3.11+, managed with `uv` (fall back to `venv` + `pip` if `uv` unavailable). LangGraph + langchain-core + langchain-openai for orchestration and labeling. Postgres for storage (check if a local Postgres is running; if not, set one up via Docker Compose in the project — ask me at the Gate 1.0 if you're unsure which I prefer). `psycopg` / SQLAlchemy Core for relational access. APScheduler for scheduling. `feedparser` + `httpx` for fetching.
+- **Secrets:** all config via `.env` (python-dotenv), never hardcoded. Create `.env.example` documenting every variable. I will fill in `DEEPSEEK_API_KEY` and DB credentials myself — if a key is missing, build everything and mock/skip only the affected call in tests; do not invent keys.
+- **LLM for labeling:** `deepseek-chat` (DeepSeek-V3 — the cost-effective model) via `langchain-openai`'s `ChatOpenAI` against DeepSeek's OpenAI-compatible endpoint, using `.with_structured_output()`.
 - **Code standards:** type hints everywhere, `ruff` for lint/format, `pytest` for tests, small modules, no dead code. Each node in the graph must be a thin adapter over plain, independently testable functions (framework-replaceable at the edges).
 - **Scope discipline — explicitly OUT of Phase 1:** no Reddit, no Hugging Face, no Tavily/Exa/Brave, no arXiv, no embeddings/pgvector dedup, no alerting, no web UI. If you think something out-of-scope is needed, raise it at a gate; do not build it.
 
@@ -65,7 +65,7 @@ Verify each feed URL actually resolves at build time; if one is wrong/moved, fin
    - `labels` — one row per labeling of a story: `label_id PK, story_id FK, is_hot BOOL, importance SMALLINT CHECK 1..10, category TEXT, rationale TEXT, model TEXT, prompt_version TEXT, labeled_at`. (Separate table, not columns on `stories`, so relabeling/evals are possible later.)
    - `pipeline_runs` — `run_id PK, thread_id TEXT, started_at, finished_at, status, stats JSONB`.
    - Sensible indexes: `arrivals(url_canonical)`, `arrivals(story_id)`, `stories(first_seen_at)`, `labels(story_id, labeled_at)`.
-4. `config.py` loading DB URL, Anthropic key, model name, batch concurrency, from env.
+4. `config.py` loading DB URL, DeepSeek key, model name, batch concurrency, from env.
 5. Smoke test: `pytest` test that connects to the DB and confirms all tables exist.
 
 **→ GATE 1.0.** Show me the schema (actual `\d+` output), the file tree, and your migration-tool decision. Wait.
@@ -133,7 +133,7 @@ Verify each feed URL actually resolves at build time; if one is wrong/moved, fin
 2. `labeling/labeler.py`: `init_chat_model` → `.with_structured_output(HeadlineLabel)`; prompt as a versioned constant (`PROMPT_VERSION = "p1"`) stored into `labels.prompt_version`. Prompt receives: title, source names it arrived from, arrival_count, hn_front_page — cross-source arrival is an explicit importance signal, and the prompt must say so.
 3. Batch execution over unlabeled stories via `.abatch` with `max_concurrency` from config; `.with_retry()` for transient failures; a story that fails labeling stays unlabeled (picked up next run), never blocks the batch.
 4. Persist one `labels` row per story per labeling.
-5. Tests: schema validation tests; labeler test with the model call mocked; one `@pytest.mark.live` test labeling 3 real stories (skipped cleanly if `ANTHROPIC_API_KEY` unset).
+5. Tests: schema validation tests; labeler test with the model call mocked; one `@pytest.mark.live` test labeling 3 real stories (skipped cleanly if `DEEPSEEK_API_KEY` unset).
 6. CLI: `python -m newspipe label`, printing labeled count + a table of (title, is_hot, importance, category).
 
 **→ GATE 1.3.** Run live labeling on ~10 real stories, show me the labeled table, and flag any labels you disagree with (that's prompt feedback for me). Wait.
@@ -170,7 +170,7 @@ Verify each feed URL actually resolves at build time; if one is wrong/moved, fin
 2. Process management: a `systemd` unit file (`deploy/newspipe.service`) running the scheduler under my user, `Restart=on-failure`, env file loading — install instructions in README, but **do not enable it without asking me at the gate**.
 3. Structured logging (JSON lines) to stdout + rotating file in `logs/`; log per-run summary at INFO, per-source detail at DEBUG.
 4. Operational CLI: `python -m newspipe status` — last 5 runs from `pipeline_runs`, unlabeled backlog count, per-source last success, error tail.
-5. Failure-mode review: confirm and document in README what happens when (a) a feed 404s, (b) Postgres is briefly down, (c) Anthropic API is rate-limited, (d) two runs would overlap. Fix anything not already handled gracefully.
+5. Failure-mode review: confirm and document in README what happens when (a) a feed 404s, (b) Postgres is briefly down, (c) DeepSeek API is rate-limited, (d) two runs would overlap. Fix anything not already handled gracefully.
 6. Full test suite green; `ruff` clean; README complete: setup from scratch, all CLI commands, schema diagram (ASCII fine), 72h soak-test checklist (what I should check after 3 days of unattended running).
 
 **→ GATE 1.5 (final).** Present: full demo of `status` after at least 2 real scheduled/manual runs, the failure-mode table, and your recommendation list for Phase 2 prerequisites (e.g., pgvector install). Then wait for my sign-off before enabling the systemd timer.

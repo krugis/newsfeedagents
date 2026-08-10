@@ -4,9 +4,9 @@ Hourly ingestion of GenAI/ML news: fetch from zero-auth sources → normalize �
 deduplicate → label with an LLM → persist to Postgres, orchestrated by LangGraph
 with durable checkpointing.
 
-**Status:** Phase 1, gated build. Currently at **Gate 1.3** (LLM labeling).
-The remaining sub-phases (graph, scheduler) build on this and land one at a
-time at their respective gates.
+**Status:** Phase 1, gated build. Currently at **Gate 1.4** (LangGraph
+orchestration + durable checkpointing). The remaining sub-phase (scheduler,
+hardening) builds on this and lands at its gate.
 
 ## Stack
 
@@ -15,8 +15,8 @@ time at their respective gates.
 - psycopg 3 + Pydantic / pydantic-settings
 - feedparser + httpx (fetching)
 - langchain-openai + langchain-core (labeling via structured output, DeepSeek)
-- Coming in later gates: LangGraph (orchestration/checkpointing), APScheduler
-  (scheduling).
+- LangGraph + langgraph-checkpoint-postgres (orchestration/checkpointing)
+- Coming in later gates: APScheduler (scheduling).
 
 ## Quickstart
 
@@ -47,13 +47,17 @@ src/newspipe/
   labeling/
     schema.py           # HeadlineLabel — the structured-output contract
     labeler.py          # prompt v1 + batch labeling over unlabeled stories
+  graph/
+    state.py            # PipelineState TypedDict (reduced list channels)
+    build.py            # StateGraph nodes, fan-out, checkpointer, `run` CLI
   db/
     engine.py           # psycopg connection management
     migrate.py          # tiny SQL migration runner
     migrations/         # 0001_initial.sql, 0002_sources_method_sitemap.sql
     sources.py          # source registry queries + upsert
-    arrivals.py         # idempotent arrivals persistence
+    arrivals.py         # idempotent arrivals persistence (+ returning ids)
     labels.py           # select unlabeled stories + insert label rows
+    pipeline_runs.py    # run telemetry: open + finalize a run row
   fetchers/             # one fetcher per method type
     base.py             # RawItem, shared httpx client, bounded retry
     rss.py              # feedparser-based RSS/Atom
@@ -73,6 +77,7 @@ tests/
   test_fetchers_live.py # live integration tests (marked `live`)
   test_fetch.py         # seeding + arrivals idempotency + due-source logic
   test_labeling.py      # schema/prompt/persistence + mocked batch + live label
+  test_graph.py         # graph nodes/stats + crash-resume acceptance test
 ```
 
 ## CLI
@@ -82,6 +87,7 @@ tests/
 | `python -m newspipe fetch` | Fetch all due sources once; prints per-source counts (fetched/new). Never breaks on one source's failure. |
 | `python -m newspipe dedup` | Deduplicate all unattached arrivals into stories (canonical URL, then 72h title-hash). Race-safe via advisory lock. |
 | `python -m newspipe label` | Label unlabeled stories with the LLM; prints a table of the new labels. `--limit` caps the batch (default `LABEL_LIMIT_PER_RUN`). |
+| `python -m newspipe run` | One full pipeline run (fetch→dedup→label→finalize), checkpointed under `run-YYYYMMDD-HH`. `--resume <thread_id>` resumes a crashed run. |
 | `python -m newspipe.db.migrate` | Apply pending schema migrations (idempotent). |
 | `python scripts/seed_sources.py` | Upsert the Phase 1 source registry (idempotent). |
 
@@ -135,6 +141,39 @@ added later without touching `stories`).
 ```bash
 uv run python -m newspipe label --limit 10   # label up to 10 oldest unlabeled
 ```
+
+## Pipeline run (LangGraph)
+
+One run is a `StateGraph` compiled with a `PostgresSaver` checkpointer:
+
+```
+select_due_sources → [Send fan-out: fetch_source per source] → dedup → label → finalize
+```
+
+- `select_due_sources` opens a `pipeline_runs` row (`running`) and picks the
+  due sources; with none due it hops straight to `dedup`.
+- `fetch_source` runs once per due source (parallel superstep); a failing
+  source appends to `state.errors` and never breaks the run.
+- `dedup` / `label` are thin wrappers over the 1.2/1.3 functions (labeling is
+  bounded by `LABEL_LIMIT_PER_RUN` so a backfilled DB drains gradually).
+- `finalize` closes the run row with `status='success'` and a stats summary
+  (per-source counts, new arrivals/stories, labeled, errors, duration).
+
+**Durable checkpointing:** every node's writes are checkpointed under a
+`thread_id` (`run-YYYYMMDD-HH` by default), so re-invoking the same thread
+resumes from the last checkpoint instead of restarting. The checkpointer lives
+in the same Postgres (its own `checkpoints`/`checkpoint_writes`/
+`checkpoint_blobs` tables, created idempotently by `saver.setup()`).
+
+```bash
+uv run python -m newspipe run                      # this hour's thread
+uv run python -m newspipe run --resume run-20260810-13   # resume a crash
+```
+
+A crash after fetch but before label is the acceptance test: the resumed run
+prints `resuming existing thread (fetch will not be re-executed)` and the
+fetch superstep is restored from the checkpoint, never re-run (verified in
+`tests/test_graph.py::test_crash_resume_skips_fetch` and in the live demo).
 
 ## Sources
 

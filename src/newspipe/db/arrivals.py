@@ -11,22 +11,23 @@ _INSERT_ARRIVAL = """
 INSERT INTO arrivals (source_id, external_id, url, url_canonical, title, published_at, raw)
 VALUES (%s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (source_id, external_id) DO NOTHING
+RETURNING arrival_id
 """
 
 
-def insert_arrivals(
+def insert_arrivals_returning(
     conn: psycopg.Connection,
     source_id: int,
     items: list[RawItem],
-) -> int:
-    """Insert items as arrivals; returns the number of newly inserted rows.
+) -> list[int]:
+    """Insert items as arrivals; returns the newly inserted arrival_ids.
 
     Re-fetching the same items is safe: existing (source_id, external_id)
-    rows are ignored, so this is idempotent.
+    rows are ignored and yield no id, so this is idempotent.
     """
-    inserted = 0
+    inserted: list[int] = []
     for item in items:
-        cur = conn.execute(
+        row = conn.execute(
             _INSERT_ARRIVAL,
             (
                 source_id,
@@ -37,6 +38,16 @@ def insert_arrivals(
                 item.published_at,
                 Jsonb(item.raw),
             ),
-        )
-        inserted += cur.rowcount
+        ).fetchone()
+        if row:
+            inserted.append(row["arrival_id"])
     return inserted
+
+
+def insert_arrivals(
+    conn: psycopg.Connection,
+    source_id: int,
+    items: list[RawItem],
+) -> int:
+    """Insert items as arrivals; returns the number of newly inserted rows."""
+    return len(insert_arrivals_returning(conn, source_id, items))

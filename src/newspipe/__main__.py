@@ -21,6 +21,15 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="max stories to label this run (default: settings.label_limit_per_run)",
     )
+    run_parser = sub.add_parser(
+        "run", help="one full pipeline run (fetch->dedup->label->finalize), checkpointed"
+    )
+    run_parser.add_argument(
+        "--resume",
+        metavar="THREAD_ID",
+        default=None,
+        help="resume this thread (default: this hour's run-YYYYMMDD-HH)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -36,6 +45,10 @@ def main(argv: list[str] | None = None) -> int:
         from newspipe.labeling import labeler
 
         return labeler.main(limit=args.limit)
+    if args.command == "run":
+        from newspipe.graph import build
+
+        return build.main(resume=args.resume)
 
     parser.error(f"unknown command: {args.command!r}")
     return 2  # pragma: no cover

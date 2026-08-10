@@ -58,6 +58,8 @@ class LabelStats:
     labels_created: int = 0
     failed: int = 0
     stories: list[dict] = field(default_factory=list)  # {title, is_hot, importance, category}
+    # story_ids that received a label this run, for run stats
+    labeled_story_ids: list[int] = field(default_factory=list)
 
 
 def build_labeler():
@@ -130,6 +132,7 @@ def label_unlabeled(limit: int | None = None, story_ids: list[int] | None = None
                 prompt_version=PROMPT_VERSION,
             )
             stats.labels_created += 1
+            stats.labeled_story_ids.append(story["story_id"])
             stats.stories.append(
                 {
                     "title": story["title"],

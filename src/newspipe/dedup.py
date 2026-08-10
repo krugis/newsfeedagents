@@ -14,7 +14,7 @@ cheap.)
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from newspipe.db.engine import connect
@@ -48,6 +48,8 @@ class DedupStats:
     stories_created: int = 0
     arrivals_attached: int = 0
     title_matches: int = 0
+    # every story touched this run (created or attached-to), for run stats
+    affected_story_ids: list[int] = field(default_factory=list)
 
 
 def run_dedup(now: datetime | None = None) -> DedupStats:
@@ -71,6 +73,7 @@ def run_dedup(now: datetime | None = None) -> DedupStats:
 
         attachments: list[tuple] = []
         story_updates: dict[int, dict] = {}
+        affected: set[int] = set()
 
         for entry in normalized:
             story_id, matched = _match(entry, story_by_canon, story_by_hash)
@@ -101,6 +104,7 @@ def run_dedup(now: datetime | None = None) -> DedupStats:
                 if entry["published_at"] and entry["published_at"] > agg["last"]:
                     agg["last"] = entry["published_at"]
 
+            affected.add(story_id)
             attachments.append((entry["canonical"], story_id, entry["arrival_id"]))
             stats.arrivals_attached += 1
 
@@ -109,6 +113,7 @@ def run_dedup(now: datetime | None = None) -> DedupStats:
         for story_id, agg in story_updates.items():
             conn.execute(_UPDATE_STORY, (agg["count"], agg["last"], agg["hn"], story_id))
 
+    stats.affected_story_ids = sorted(affected)
     return stats
 
 

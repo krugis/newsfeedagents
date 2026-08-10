@@ -38,6 +38,12 @@ def select_all_sources(conn: psycopg.Connection) -> list[Source]:
     return [Source(**row) for row in rows]
 
 
+def select_source_by_id(conn: psycopg.Connection, source_id: int) -> Source | None:
+    """Return one source by id, or None if it no longer exists."""
+    row = conn.execute(_SELECT_COLUMNS + " WHERE source_id = %s", (source_id,)).fetchone()
+    return Source(**row) if row else None
+
+
 def update_last_polled(conn: psycopg.Connection, source_id: int, when: datetime) -> None:
     """Record a successful poll timestamp on a source."""
     conn.execute(

@@ -1,0 +1,22 @@
+# Local Postgres 16 for newspipe. Host port 5433 avoids colliding with any
+# other Postgres already bound to 5432 on this server.
+services:
+  db:
+    image: postgres:16
+    container_name: newspipe-postgres-claudecode
+    environment:
+      POSTGRES_USER: newspipe
+      POSTGRES_PASSWORD: newspipe
+      POSTGRES_DB: newspipe
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U newspipe -d newspipe"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:

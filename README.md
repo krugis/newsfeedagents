@@ -4,9 +4,9 @@ Hourly ingestion of GenAI/ML news: fetch from zero-auth sources → normalize �
 deduplicate → label with an LLM → persist to Postgres, orchestrated by LangGraph
 with durable checkpointing.
 
-**Status:** Phase 1, gated build. Currently at **Gate 1.4** (LangGraph
-orchestration + durable checkpointing). The remaining sub-phase (scheduler,
-hardening) builds on this and lands at its gate.
+**Status:** Phase 1, gated build. All sub-phases built (fetch → normalize →
+dedup → label → orchestrate → schedule). **Gate 1.5 is the final gate** —
+awaiting sign-off before enabling the systemd timer.
 
 ## Stack
 
@@ -16,7 +16,7 @@ hardening) builds on this and lands at its gate.
 - feedparser + httpx (fetching)
 - langchain-openai + langchain-core (labeling via structured output, DeepSeek)
 - LangGraph + langgraph-checkpoint-postgres (orchestration/checkpointing)
-- Coming in later gates: APScheduler (scheduling).
+- APScheduler (hourly scheduling)
 
 ## Quickstart
 
@@ -50,6 +50,9 @@ src/newspipe/
   graph/
     state.py            # PipelineState TypedDict (reduced list channels)
     build.py            # StateGraph nodes, fan-out, checkpointer, `run` CLI
+  scheduler.py          # APScheduler hourly job (minute 5), systemd entrypoint
+  status.py             # `status` CLI: last runs, backlog, source health
+  logging_setup.py      # JSON-lines logging (stdout + rotating file in logs/)
   db/
     engine.py           # psycopg connection management
     migrate.py          # tiny SQL migration runner
@@ -78,6 +81,11 @@ tests/
   test_fetch.py         # seeding + arrivals idempotency + due-source logic
   test_labeling.py      # schema/prompt/persistence + mocked batch + live label
   test_graph.py         # graph nodes/stats + crash-resume acceptance test
+  test_status.py        # status queries (runs, backlog, sources, errors)
+  test_scheduler.py     # hour-slot thread id, job config, JSON logging
+deploy/
+  newspipe.service      # systemd unit running the scheduler
+logs/                   # rotating JSON log files (created at runtime)
 ```
 
 ## CLI
@@ -88,6 +96,8 @@ tests/
 | `python -m newspipe dedup` | Deduplicate all unattached arrivals into stories (canonical URL, then 72h title-hash). Race-safe via advisory lock. |
 | `python -m newspipe label` | Label unlabeled stories with the LLM; prints a table of the new labels. `--limit` caps the batch (default `LABEL_LIMIT_PER_RUN`). |
 | `python -m newspipe run` | One full pipeline run (fetch→dedup→label→finalize), checkpointed under `run-YYYYMMDD-HH`. `--resume <thread_id>` resumes a crashed run. |
+| `python -m newspipe status` | Operational view: last 5 runs, unlabeled backlog, per-source last poll, recent errors. |
+| `python -m newspipe scheduler` | Run the hourly scheduler in the foreground (systemd normally runs it). |
 | `python -m newspipe.db.migrate` | Apply pending schema migrations (idempotent). |
 | `python scripts/seed_sources.py` | Upsert the Phase 1 source registry (idempotent). |
 
@@ -174,6 +184,76 @@ A crash after fetch but before label is the acceptance test: the resumed run
 prints `resuming existing thread (fetch will not be re-executed)` and the
 fetch superstep is restored from the checkpoint, never re-run (verified in
 `tests/test_graph.py::test_crash_resume_skips_fetch` and in the live demo).
+
+## Scheduling (APScheduler + systemd)
+
+`python -m newspipe scheduler` runs a `BlockingScheduler`: hourly at minute 5,
+`max_instances=1` (no overlapping runs), `coalesce=True`, `misfire_grace_time=600`.
+Each tick invokes the graph under the hour-slot thread id `run-YYYYMMDD-HH`, so
+a crash that left a checkpoint resumes instead of restarting.
+
+Run it under systemd:
+
+```bash
+sudo cp deploy/newspipe.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl start newspipe      # start now
+sudo systemctl enable newspipe     # start on boot — only after Gate 1.5 sign-off
+journalctl -u newspipe -f          # structured JSON lines
+```
+
+The unit runs the venv's `python -m newspipe.scheduler`, loads `.env` via
+`EnvironmentFile`, and `Restart=on-failure`. The project is currently
+root-owned; if you deploy under another account, change `User=` and
+`chown -R` the project.
+
+## Logging
+
+Structured JSON-lines logging (`logging_setup.py`) to stdout **and** a rotating
+file `logs/pipeline.log` (10 MB × 5 backups). Each line carries `ts` (UTC ISO),
+`level`, `logger`, `message`, and structured `extra_*` fields. The scheduler
+emits `run_completed` at INFO with the full stats payload, one `source_result`
+at DEBUG per source, and `source_error` at WARNING per failure. The interactive
+CLIs log JSON to the file only and keep stdout human-readable.
+
+```bash
+tail -f logs/pipeline.log | jq -c 'select(.level=="WARNING" or .level=="ERROR")'
+```
+
+## Failure modes
+
+| Scenario | What happens | Why it's safe |
+|---|---|---|
+| A feed 404s | `get_with_retry` does not retry 4xx → `fetch_source` catches → error appended to `state.errors` → the run continues | Per-source isolation: one dead feed never breaks the batch; the run still finalizes with `sources_failed>0` |
+| Postgres briefly down | A node's `connect()` raises → the graph `invoke` raises → the tick logs `tick_failed` → the next hour retries (systemd restarts the scheduler on failure) | Dedup is one transaction under an advisory lock; checkpoints only write when PG is reachable, so a partial run simply resumes later |
+| DeepSeek rate-limited | `ChatOpenAI` SDK backoff + `.with_retry()` retry the call; a story that still fails stays unlabeled (`return_exceptions=True`) | Labeling never blocks the batch; failed stories are retried on the next run |
+| Two runs would overlap | `max_instances=1` serializes scheduler ticks; a manual re-run in the same hour resumes the same thread checkpoint (fetch not re-executed); dedup holds an advisory lock | No duplicate fetches, arrivals, or stories |
+
+## 72-hour soak checklist
+
+After you enable the scheduler, check these once a day for ~3 days:
+
+1. `python -m newspipe status` — expect 8 sources `on`, error tail empty, one
+   new `run-YYYYMMDD-HH` row per hour (24/day), and `unlabeled backlog`
+   trending down toward the rate `LABEL_LIMIT_PER_RUN` allows.
+2. `logs/pipeline.log` — one `run_completed` INFO line per hour with sane
+   stats; per-source DEBUG lines; no `tick_failed` / `source_error` growth.
+3. Rotating log works: file stays ≤ 10 MB, backups appear in `logs/`.
+4. Spot-check labeled stories (see Labeling): categories sane, hot items not
+   routine, `is_genai_ml_relevant=False` filtering broad-feed noise.
+5. Crash-resume drill: `sudo systemctl restart newspipe` mid-run, then check
+   the next log line says `resuming existing thread` (fetch not re-executed).
+6. Dedup sanity: `status` `stories` count should not balloon — duplicate
+   cross-source stories collapse onto one `stories` row.
+
+## Schema
+
+```
+sources (registry) 1─N arrivals (raw, append-only) N─1 stories (deduped) 1─N labels
+                            └──────── pipeline_runs (run telemetry)
+LangGraph checkpoint tables (checkpoints / checkpoint_writes / checkpoint_blobs)
+in the same Postgres, created idempotently by PostgresSaver.setup().
+```
 
 ## Sources
 

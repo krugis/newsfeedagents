@@ -11,6 +11,7 @@ re-executes fetch (the acceptance test of this sub-phase).
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from langgraph.checkpoint.postgres import PostgresSaver
@@ -28,6 +29,9 @@ from newspipe.dedup import run_dedup
 from newspipe.fetchers import get_fetcher
 from newspipe.graph.state import PipelineState
 from newspipe.labeling.labeler import label_unlabeled
+from newspipe.logging_setup import setup_logging
+
+logger = logging.getLogger(__name__)
 
 
 def select_due_sources(state: PipelineState) -> dict:
@@ -167,6 +171,49 @@ def initial_state(thread_id: str) -> PipelineState:
     }
 
 
+def run_pipeline(thread_id: str | None = None) -> dict:
+    """Invoke the graph once under `thread_id` (default hour-slot).
+
+    Returns the final pipeline state. When the thread already has a checkpoint
+    (a crashed run), langgraph requires `input=None` to resume — passing an
+    input would restart the run — so the checkpoint existence check decides.
+    """
+    settings = get_settings()
+    thread_id = thread_id or f"run-{datetime.now(UTC):%Y%m%d-%H}"
+    with PostgresSaver.from_conn_string(settings.database_url) as saver:
+        saver.setup()
+        graph = build_graph(saver)
+        config = {"configurable": {"thread_id": thread_id}}
+        has_checkpoint = saver.get_tuple(config) is not None
+        run_input = None if has_checkpoint else initial_state(thread_id)
+        return graph.invoke(run_input, config=config)
+
+
+def log_run(result: dict) -> None:
+    """INFO summary + DEBUG per-source detail + WARNING per error, for a run."""
+    stats = result.get("stats", {})
+    logger.info(
+        "run_completed",
+        extra={
+            "extra_run_id": result.get("run_id"),
+            "extra_thread_id": result.get("thread_id"),
+            "extra_status": "success",
+            "extra_stats": stats,
+        },
+    )
+    for source in stats.get("per_source", []):
+        logger.debug(
+            "source_result",
+            extra={
+                "extra_source": source.get("source"),
+                "extra_fetched": source.get("fetched"),
+                "extra_new": source.get("new"),
+            },
+        )
+    for error in stats.get("errors", []):
+        logger.warning("source_error", extra={"extra_error": error})
+
+
 def main(resume: str | None = None) -> int:
     """CLI: one full graph invocation, checkpointed under a thread_id.
 
@@ -174,20 +221,11 @@ def main(resume: str | None = None) -> int:
     hour resumes a crashed run from its last checkpoint instead of restarting.
     `--resume <thread_id>` targets a specific thread explicitly.
     """
-    settings = get_settings()
+    setup_logging(to_stdout=False)
     thread_id = resume or f"run-{datetime.now(UTC):%Y%m%d-%H}"
     print(f"thread: {thread_id}")
-    with PostgresSaver.from_conn_string(settings.database_url) as saver:
-        saver.setup()
-        graph = build_graph(saver)
-        config = {"configurable": {"thread_id": thread_id}}
-        # Resume when this thread already has a checkpoint (a crashed run):
-        # langgraph requires input=None to resume, otherwise the run restarts.
-        has_checkpoint = saver.get_tuple(config) is not None
-        run_input = None if has_checkpoint else initial_state(thread_id)
-        if has_checkpoint:
-            print("resuming existing thread (fetch will not be re-executed)")
-        result = graph.invoke(run_input, config=config)
+    result = run_pipeline(thread_id)
+    log_run(result)
     stats = result.get("stats", {})
     print(f"run_id:            {result.get('run_id')}")
     print(f"sources ok/failed: {stats.get('sources_ok')}/{stats.get('sources_failed')}")

@@ -30,6 +30,8 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="resume this thread (default: this hour's run-YYYYMMDD-HH)",
     )
+    sub.add_parser("status", help="show last runs, unlabeled backlog, source health, errors")
+    sub.add_parser("scheduler", help="run the hourly scheduler (foreground or via systemd)")
 
     args = parser.parse_args(argv)
 
@@ -49,6 +51,14 @@ def main(argv: list[str] | None = None) -> int:
         from newspipe.graph import build
 
         return build.main(resume=args.resume)
+    if args.command == "status":
+        from newspipe import status
+
+        return status.main()
+    if args.command == "scheduler":
+        from newspipe import scheduler
+
+        return scheduler.main()
 
     parser.error(f"unknown command: {args.command!r}")
     return 2  # pragma: no cover

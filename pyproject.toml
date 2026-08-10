@@ -5,6 +5,7 @@ description = "Phase 1 of an hourly GenAI/ML news ingestion pipeline"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "apscheduler>=3.10,<4",
     "feedparser>=6,<7",
     "httpx>=0.27,<1",
     "langchain-core>=0.3,<2",

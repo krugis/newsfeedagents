@@ -60,3 +60,5 @@ def source_scope(db_conn):
             db_conn.execute("DELETE FROM stories WHERE story_id = ANY(%s)", (story_ids,))
         db_conn.execute("DELETE FROM arrivals WHERE source_id = ANY(%s)", (created,))
         db_conn.execute("DELETE FROM sources WHERE source_id = ANY(%s)", (created,))
+        # runs opened by graph/status tests under zz-* threads
+        db_conn.execute("DELETE FROM pipeline_runs WHERE thread_id LIKE 'zz-%'")

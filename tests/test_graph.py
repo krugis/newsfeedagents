@@ -75,6 +75,11 @@ def _due_only(db_conn, source_scope, names: list[str]):
                 "UPDATE sources SET last_polled_at = %s WHERE source_id = %s",
                 (row["last_polled_at"], row["source_id"]),
             )
+        # drop checkpoints left by this test's threads so the operational
+        # `status` view stays free of test noise
+        db_conn.execute("DELETE FROM checkpoint_writes WHERE thread_id LIKE 'zz-%'")
+        db_conn.execute("DELETE FROM checkpoint_blobs WHERE thread_id LIKE 'zz-%'")
+        db_conn.execute("DELETE FROM checkpoints WHERE thread_id LIKE 'zz-%'")
         db_conn.commit()
 
 

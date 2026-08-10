@@ -21,7 +21,7 @@ this skeleton and land one at a time at their respective gates.
 
 ```bash
 cp .env.example .env          # then fill in ANTHROPIC_API_KEY when it exists
-docker compose up -d          # start Postgres 16 on localhost:5433
+docker-compose up -d          # start Postgres 16 on localhost:5433 (standalone docker-compose; the `docker compose` v2 plugin is not installed on this server)
 uv sync                       # create the venv and install the project
 uv run python -m newspipe.db.migrate   # apply schema migrations (idempotent)
 uv run pytest                 # run the test suite

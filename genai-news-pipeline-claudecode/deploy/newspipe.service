@@ -1,0 +1,27 @@
+# newspipe — hourly GenAI/ML news pipeline (scheduler)
+#
+# Install:
+#   sudo cp deploy/newspipe.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl start newspipe        # start now
+#   sudo systemctl enable newspipe       # start on boot  <-- only after the Gate 1.5 sign-off
+#
+# The project is currently owned by root on this server. If you run under a
+# non-root account, change User= to that account and `chown -R` the project.
+
+[Unit]
+Description=newspipe — hourly GenAI/ML news pipeline
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/agate/newsfeedagents/genai-news-pipeline-claudecode
+EnvironmentFile=/home/agate/newsfeedagents/genai-news-pipeline-claudecode/.env
+ExecStart=/home/agate/newsfeedagents/genai-news-pipeline-claudecode/.venv/bin/python -m newspipe.scheduler
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

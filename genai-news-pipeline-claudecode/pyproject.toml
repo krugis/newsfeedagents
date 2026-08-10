@@ -1,0 +1,51 @@
+[project]
+name = "newspipe"
+version = "0.1.0"
+description = "Phase 1 of an hourly GenAI/ML news ingestion pipeline"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "apscheduler>=3.10,<4",
+    "feedparser>=6,<7",
+    "httpx>=0.27,<1",
+    "langchain-core>=0.3,<2",
+    "langchain-openai>=0.3,<2",
+    "langgraph>=1.0,<2",
+    "langgraph-checkpoint-postgres>=2.0,<3",
+    "psycopg[binary]>=3.1,<4",
+    "pydantic>=2.7,<3",
+    "pydantic-settings>=2.3,<3",
+    "python-dotenv>=1.0,<2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0,<9",
+    "pytest-mock>=3.14,<4",
+    "ruff>=0.5,<1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/newspipe"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -m 'not live'"
+markers = [
+    "live: integration tests that hit live network endpoints (run with -m live)",
+]
+filterwarnings = [
+    # feedparser's benign updated->published fallback mapping (issue 310)
+    "ignore:To avoid breaking existing software.*:DeprecationWarning",
+]

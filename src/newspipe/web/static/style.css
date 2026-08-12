@@ -1,0 +1,118 @@
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  font-family: system-ui, sans-serif;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1rem 1.5rem 3rem;
+}
+
+nav {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  border-bottom: 1px solid #8888;
+  padding-bottom: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+nav a {
+  text-decoration: none;
+  font-weight: 600;
+}
+
+form.inline {
+  display: inline-block;
+  margin: 0;
+}
+
+.actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.flashes {
+  list-style: none;
+  padding: 0;
+}
+
+.flashes li {
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+}
+
+.flash-success {
+  background: #1a7f371a;
+  border: 1px solid #1a7f37;
+}
+
+.flash-error {
+  background: #cf222e1a;
+  border: 1px solid #cf222e;
+}
+
+table.settings td {
+  padding: 0.4rem 0.6rem;
+  vertical-align: top;
+}
+
+table.settings .label {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+table.settings .help {
+  font-weight: 400;
+  font-size: 0.8rem;
+  opacity: 0.7;
+  white-space: normal;
+  max-width: 22rem;
+}
+
+table.settings input {
+  width: 22rem;
+  max-width: 100%;
+}
+
+table.news {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9rem;
+}
+
+table.news th,
+table.news td {
+  text-align: left;
+  padding: 0.3rem 0.6rem;
+  border-bottom: 1px solid #8884;
+  white-space: nowrap;
+}
+
+table.news td:last-child {
+  white-space: normal;
+}
+
+.pager {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 20rem;
+}
+
+.login-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}

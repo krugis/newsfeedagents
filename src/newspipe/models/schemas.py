@@ -13,15 +13,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 Method = Literal["rss", "hn_algolia", "google_news_rss", "sitemap"]
-Category = Literal[
-    "model_release",
-    "research",
-    "industry",
-    "funding",
-    "policy_regulation",
-    "tooling_infra",
-    "other",
-]
+# The category set is configurable (Settings.label_categories) and enforced
+# as an enum at the LLM structured-output boundary (labeling/schema.py), not
+# here — the DB column is plain TEXT, so a static Literal would only ever be
+# a stale compile-time hint.
+Category = str
 
 
 class Source(BaseModel):
@@ -71,7 +67,10 @@ class Label(BaseModel):
     label_id: int
     story_id: int
     is_hot: bool
-    importance: int = Field(ge=1, le=10)
+    # The exact configured scale (Settings.importance_min/max) is enforced at
+    # the LLM structured-output boundary; this mirrors the DB's widened CHECK
+    # as a generous ceiling for whatever range is configured.
+    importance: int = Field(ge=1, le=100)
     category: Category
     is_genai_ml_relevant: bool = True
     rationale: str | None = None

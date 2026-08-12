@@ -23,6 +23,7 @@ from newspipe.config import get_settings
 from newspipe.db.arrivals import insert_arrivals_returning
 from newspipe.db.engine import connect
 from newspipe.db.pipeline_runs import finalize_pipeline_run, insert_pipeline_run
+from newspipe.db.pipeline_state import get_state, set_state
 from newspipe.db.sources import select_due_sources as select_due_sources_db
 from newspipe.db.sources import select_source_by_id, update_last_polled
 from newspipe.dedup import run_dedup
@@ -92,13 +93,32 @@ def dedup(state: PipelineState) -> dict:
     }
 
 
+_LAST_LABEL_RUN_KEY = "last_label_run_at"
+
+
 def label(state: PipelineState) -> dict:
     """Thin wrapper over the labeling batch (1.3), bounded by the backfill guard.
 
     Without a limit a backfilled DB would be drained in a single run; the
     hourly cadence plus label_limit_per_run clears it gradually instead.
+
+    `label_interval_minutes` (0 by default) optionally throttles labeling to
+    run less often than the fetch cadence, tracked via `pipeline_state`; a
+    skipped tick reports no newly labeled stories.
     """
-    stats = label_unlabeled(limit=get_settings().label_limit_per_run)
+    settings = get_settings()
+    now = datetime.now(UTC)
+    if settings.label_interval_minutes > 0:
+        with connect() as conn:
+            last_raw = get_state(conn, _LAST_LABEL_RUN_KEY)
+        if last_raw is not None:
+            elapsed_minutes = (now - datetime.fromisoformat(last_raw)).total_seconds() / 60
+            if elapsed_minutes < settings.label_interval_minutes:
+                return {"labeled_story_ids": []}
+    stats = label_unlabeled(limit=settings.label_limit_per_run)
+    if settings.label_interval_minutes > 0:
+        with connect() as conn:
+            set_state(conn, _LAST_LABEL_RUN_KEY, now.isoformat())
     return {"labeled_story_ids": stats.labeled_story_ids}
 
 

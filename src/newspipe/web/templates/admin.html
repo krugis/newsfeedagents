@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Admin — newspipe{% endblock %}
+{% block content %}
+<h1>Admin</h1>
+
+<section>
+  <h2>Actions</h2>
+  <div class="actions">
+    <form method="post" action="{{ url_for('admin.trigger_action', name='fetch') }}" class="inline">
+      <button type="submit">{{ action_labels['fetch'] }}</button>
+    </form>
+    <form method="post" action="{{ url_for('admin.trigger_action', name='dedup') }}" class="inline">
+      <button type="submit">{{ action_labels['dedup'] }}</button>
+    </form>
+    <form method="post" action="{{ url_for('admin.trigger_action', name='label') }}" class="inline">
+      <button type="submit">{{ action_labels['label'] }}</button>
+    </form>
+  </div>
+</section>
+
+<section>
+  <h2>Settings</h2>
+  <form method="post" action="{{ url_for('admin.save_settings') }}">
+    <table class="settings">
+      {% for field, value in fields %}
+      <tr>
+        <td class="label">
+          <label for="{{ field.env_var }}">{{ field.label }}</label>
+          {% if field.help_text %}<div class="help">{{ field.help_text }}</div>{% endif %}
+        </td>
+        <td>
+          {% if field.input_type == 'password' %}
+          <input type="password" id="{{ field.env_var }}" name="{{ field.env_var }}"
+                 value="{{ value }}" autocomplete="off">
+          {% elif field.input_type in ('number', 'optional_number') %}
+          <input type="number" id="{{ field.env_var }}" name="{{ field.env_var }}" value="{{ value }}">
+          {% else %}
+          <input type="text" id="{{ field.env_var }}" name="{{ field.env_var }}" value="{{ value }}">
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    <button type="submit">Save settings</button>
+  </form>
+</section>
+{% endblock %}

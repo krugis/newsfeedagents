@@ -1,10 +1,14 @@
 """Hourly scheduler (Gate 1.5).
 
-Runs the pipeline graph once per hour at minute 5 via APScheduler. Each tick
-invokes the graph under the hour-slot thread_id (`run-YYYYMMDD-HH`), so a
-crash that left a checkpoint resumes instead of restarting. `max_instances=1`
-prevents overlap; `coalesce=True` and `misfire_grace_time=600` keep late ticks
-sane.
+Runs the pipeline graph on a configurable cron cadence via APScheduler
+(`Settings.scheduler_cron_minute`/`scheduler_cron_hour`, default hourly at
+minute 5 — the original spec's schedule). Each tick invokes the graph under
+the hour-slot thread_id (`run-YYYYMMDD-HH`), so a crash that left a
+checkpoint resumes instead of restarting. `max_instances=1` prevents overlap;
+`coalesce=True` and `misfire_grace_time=600` keep late ticks sane.
+
+When `Settings.retention_days` is set, a second daily job purges expired news
+data (see `retention.py`).
 
 Run it with `python -m newspipe scheduler` or via the systemd unit
 (`deploy/newspipe.service`).
@@ -18,12 +22,12 @@ from datetime import UTC, datetime
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from newspipe.config import get_settings
 from newspipe.graph.build import log_run, run_pipeline
 from newspipe.logging_setup import setup_logging
+from newspipe.retention import purge_expired
 
 logger = logging.getLogger(__name__)
-
-MINUTE = "5"  # hourly at minute 5, per spec
 
 
 def hour_slot_thread_id(now: datetime | None = None) -> str:
@@ -47,17 +51,44 @@ def tick() -> None:
     log_run(result)
 
 
+def retention_tick() -> None:
+    """One scheduled retention pass (safe for APScheduler to call)."""
+    stats = purge_expired()
+    logger.info(
+        "retention_completed",
+        extra={
+            "extra_stories_deleted": stats.stories_deleted,
+            "extra_arrivals_deleted": stats.arrivals_deleted,
+            "extra_labels_deleted": stats.labels_deleted,
+        },
+    )
+
+
 def build_scheduler() -> BlockingScheduler:
-    """Assemble the scheduler with the pipeline job registered (not started)."""
+    """Assemble the scheduler with the pipeline job registered (not started).
+
+    A daily retention job is added only when `settings.retention_days` is
+    set — leaving retention unconfigured adds no scheduled behavior at all.
+    """
+    settings = get_settings()
     scheduler = BlockingScheduler(timezone="UTC")
     scheduler.add_job(
         tick,
-        CronTrigger(minute=MINUTE),
+        CronTrigger(minute=settings.scheduler_cron_minute, hour=settings.scheduler_cron_hour),
         id="hourly-pipeline",
         max_instances=1,
         coalesce=True,
         misfire_grace_time=600,
     )
+    if settings.retention_days:
+        scheduler.add_job(
+            retention_tick,
+            CronTrigger(hour="3", minute="0"),
+            id="daily-retention",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
     return scheduler
 
 

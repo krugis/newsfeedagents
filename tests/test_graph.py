@@ -15,7 +15,7 @@ from contextlib import contextmanager
 import pytest
 from langgraph.checkpoint.postgres import PostgresSaver
 
-from newspipe.config import get_settings
+from newspipe.config import Settings, get_settings
 from newspipe.graph import build
 from newspipe.labeling.labeler import LabelStats
 
@@ -225,3 +225,46 @@ def test_crash_resume_skips_fetch(db_conn, source_scope, checkpointer, monkeypat
         "SELECT count(*) AS n FROM pipeline_runs WHERE thread_id = %s", (thread_id,)
     ).fetchone()
     assert rows["n"] == 1
+
+
+def test_label_node_respects_interval_gate(db_conn, monkeypatch):
+    """With LABEL_INTERVAL_MINUTES set, a second tick within the window skips labeling."""
+    calls = {"n": 0}
+
+    def fake_label_unlabeled(limit=None):  # noqa: ARG001
+        calls["n"] += 1
+        return LabelStats(labeled_story_ids=[1])
+
+    monkeypatch.setattr("newspipe.graph.build.label_unlabeled", fake_label_unlabeled)
+    patched_settings = Settings(label_interval_minutes=60)
+    monkeypatch.setattr("newspipe.graph.build.get_settings", lambda: patched_settings)
+    db_conn.execute("DELETE FROM pipeline_state WHERE key = 'last_label_run_at'")
+    db_conn.commit()
+
+    try:
+        first = build.label({})
+        assert calls["n"] == 1
+        assert first["labeled_story_ids"] == [1]
+
+        second = build.label({})
+        assert calls["n"] == 1  # skipped — still within the 60-minute window
+        assert second["labeled_story_ids"] == []
+    finally:
+        db_conn.execute("DELETE FROM pipeline_state WHERE key = 'last_label_run_at'")
+        db_conn.commit()
+
+
+def test_label_node_runs_every_tick_by_default(monkeypatch):
+    """label_interval_minutes=0 (default) means no cadence gating at all."""
+    calls = {"n": 0}
+
+    def fake_label_unlabeled(limit=None):  # noqa: ARG001
+        calls["n"] += 1
+        return LabelStats(labeled_story_ids=[1])
+
+    monkeypatch.setattr("newspipe.graph.build.label_unlabeled", fake_label_unlabeled)
+    monkeypatch.setattr("newspipe.graph.build.get_settings", lambda: Settings())
+
+    build.label({})
+    build.label({})
+    assert calls["n"] == 2

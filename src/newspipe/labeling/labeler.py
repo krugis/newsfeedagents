@@ -15,11 +15,12 @@ import sys
 from dataclasses import dataclass, field
 
 from langchain_openai import ChatOpenAI
+from pydantic import BaseModel
 
 from newspipe.config import get_settings
 from newspipe.db.engine import connect
 from newspipe.db.labels import insert_label, select_unlabeled_stories
-from newspipe.labeling.schema import HeadlineLabel
+from newspipe.labeling.schema import build_headline_label_model
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +39,11 @@ for. The schema's fields mean:
 - is_hot: True only for a major/breaking GenAI/ML event (a model release, a
   significant research result, a major policy decision, a large funding
   round). Routine coverage, speculation, and incremental updates are not hot.
-- importance: an integer 1..10. Cross-source arrival is an explicit importance
-  signal: a headline carried by several independent sources, or that reached
-  the Hacker News front page (HN_FRONT_PAGE true), is more likely important
-  than a single-feed mention. Weigh that signal without inflating it blindly.
+- importance: an integer {importance_min}..{importance_max}. Cross-source
+  arrival is an explicit importance signal: a headline carried by several
+  independent sources, or that reached the Hacker News front page
+  (HN_FRONT_PAGE true), is more likely important than a single-feed mention.
+  Weigh that signal without inflating it blindly.
 - category: the single best fit.
 - is_genai_ml_relevant: False if the headline is NOT about GenAI/ML — generic
   tech/software news or non-AI topics that broad feeds carry. We use this to
@@ -65,31 +67,38 @@ class LabelStats:
 def build_labeler():
     """A structured-output chat model for labeling, with transient retries."""
     settings = get_settings()
-    if not settings.deepseek_api_key:
-        raise RuntimeError("DEEPSEEK_API_KEY is not set — set it in .env to label")
+    if not settings.llm_api_key:
+        raise RuntimeError("LLM_API_KEY is not set — set it in .env to label")
+    schema = build_headline_label_model(
+        tuple(settings.label_categories), settings.importance_min, settings.importance_max
+    )
     # DeepSeek's OpenAI-compatible API does not support json_schema response
     # format, so force function_calling: the schema is carried as a tool the
     # model must call, which enforces field conformance better than json_mode.
+    # (Most OpenAI-compatible endpoints accept function_calling too.)
     model = ChatOpenAI(
         model=settings.model_name,
-        api_key=settings.deepseek_api_key,
-        base_url=settings.deepseek_base_url,
-    ).with_structured_output(HeadlineLabel, method="function_calling")
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+    ).with_structured_output(schema, method="function_calling")
     return model.with_retry()
 
 
 def build_prompt(story: dict) -> str:
     """Render the versioned prompt for one story (see PROMPT_VERSION)."""
+    settings = get_settings()
     return _PROMPT_TEMPLATE.format(
         title=story["title"],
         sources=", ".join(story["sources"]),
         arrival_count=story["arrival_count"],
         hn_front_page="true" if story["hn_front_page"] else "false",
+        importance_min=settings.importance_min,
+        importance_max=settings.importance_max,
     )
 
 
-async def _batch_label(stories: list[dict]) -> list[HeadlineLabel | Exception]:
-    """Run the model over `stories`, one HeadlineLabel per story (or its exception)."""
+async def _batch_label(stories: list[dict]) -> list[BaseModel | Exception]:
+    """Run the model over `stories`; one labeled result per story (or its exception)."""
     settings = get_settings()
     labeler = build_labeler()
     prompts = [build_prompt(story) for story in stories]
@@ -107,8 +116,8 @@ def label_unlabeled(limit: int | None = None, story_ids: list[int] | None = None
     failed story never blocks the rest of the batch.
     """
     settings = get_settings()
-    if not settings.deepseek_api_key:
-        raise RuntimeError("DEEPSEEK_API_KEY is not set — set it in .env to label")
+    if not settings.llm_api_key:
+        raise RuntimeError("LLM_API_KEY is not set — set it in .env to label")
     with connect() as conn:
         stories = select_unlabeled_stories(conn, limit=limit, story_ids=story_ids)
         stats = LabelStats(stories_attempted=len(stories))
@@ -150,7 +159,7 @@ def main(limit: int | None = None) -> int:
     limit = limit if limit is not None else settings.label_limit_per_run
     try:
         stats = label_unlabeled(limit=limit)
-    except RuntimeError as exc:  # e.g. missing ANTHROPIC_API_KEY — a config error
+    except RuntimeError as exc:  # e.g. missing LLM_API_KEY — a config error
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(f"stories attempted: {stats.stories_attempted}")

@@ -11,13 +11,13 @@ from newspipe.db.labels import insert_label, select_unlabeled_stories
 from newspipe.dedup import run_dedup
 from newspipe.fetchers.base import RawItem
 from newspipe.labeling.labeler import PROMPT_VERSION, build_prompt, label_unlabeled
-from newspipe.labeling.schema import HeadlineLabel
+from newspipe.labeling.schema import HeadlineLabel, build_headline_label_model
 
 
 @pytest.fixture
 def fake_api_key(monkeypatch):
     """Let labeler code pass the API-key guard without hitting the network."""
-    patched = Settings(deepseek_api_key="test-key")
+    patched = Settings(llm_api_key="test-key")
     monkeypatch.setattr("newspipe.labeling.labeler.get_settings", lambda: patched)
 
 
@@ -92,6 +92,39 @@ def test_headline_label_rejects_unknown_category():
 def test_headline_label_requires_all_fields():
     with pytest.raises(ValidationError):
         HeadlineLabel()
+
+
+def test_build_headline_label_model_custom_categories_and_range():
+    Custom = build_headline_label_model(("breaking", "minor"), 1, 5)
+
+    label = Custom(
+        is_hot=True, importance=5, category="breaking", is_genai_ml_relevant=True, rationale="x"
+    )
+    assert label.importance == 5
+    assert label.category == "breaking"
+
+    with pytest.raises(ValidationError):
+        Custom(
+            is_hot=True,
+            importance=6,  # out of the custom 1..5 range
+            category="breaking",
+            is_genai_ml_relevant=True,
+            rationale="x",
+        )
+    with pytest.raises(ValidationError):
+        Custom(
+            is_hot=True,
+            importance=3,
+            category="other",  # not in the custom category set
+            is_genai_ml_relevant=True,
+            rationale="x",
+        )
+
+
+def test_build_headline_label_model_is_cached():
+    a = build_headline_label_model(("x", "y"), 1, 10)
+    b = build_headline_label_model(("x", "y"), 1, 10)
+    assert a is b
 
 
 # ---- prompt -----------------------------------------------------------
@@ -303,9 +336,9 @@ def test_label_unlabeled_story_ids_filter(db_conn, source_scope, fake_api_key, m
 
 
 def test_label_unlabeled_requires_api_key(monkeypatch):
-    patched = Settings(deepseek_api_key=None)
+    patched = Settings(llm_api_key=None)
     monkeypatch.setattr("newspipe.labeling.labeler.get_settings", lambda: patched)
-    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
+    with pytest.raises(RuntimeError, match="LLM_API_KEY"):
         label_unlabeled()
 
 
@@ -314,8 +347,8 @@ def test_label_unlabeled_requires_api_key(monkeypatch):
 
 @pytest.mark.live
 def test_label_three_stories_live(db_conn, source_scope):
-    if not get_settings().deepseek_api_key:
-        pytest.skip("DEEPSEEK_API_KEY not set — set it in .env to run live labeling")
+    if not get_settings().llm_api_key:
+        pytest.skip("LLM_API_KEY not set — set it in .env to run live labeling")
     story_ids = _make_story(
         db_conn,
         source_scope,

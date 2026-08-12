@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -48,6 +49,14 @@ class Settings(BaseSettings):
     # How often the labeling step actually runs, independent of the fetch
     # cadence. 0 = label on every pipeline tick (today's behavior).
     label_interval_minutes: int = 0
+
+    # Which unlabeled stories a run picks, when not targeting specific
+    # story_ids: "newest_per_source" round-robins across sources so fresh
+    # news gets labeled promptly and no single chatty source can fill the
+    # whole budget (needed for the front page to ever show today's news
+    # instead of stalling behind an old backlog); "oldest_first" is the
+    # original pure-FIFO behavior.
+    label_order: Literal["newest_per_source", "oldest_first"] = "newest_per_source"
 
     # The category set and importance scale the labeling model is constrained
     # to via structured output (see labeling/schema.py).

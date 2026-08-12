@@ -23,7 +23,7 @@ from newspipe.config import Settings, get_settings
 # the real LLM key.
 ENV_FILE = Path(".env")
 
-InputType = Literal["text", "password", "number", "optional_number"]
+InputType = Literal["text", "password", "number", "optional_number", "select"]
 
 
 @dataclass(frozen=True)
@@ -33,6 +33,7 @@ class SettingField:
     input_type: InputType
     label: str
     help_text: str = ""
+    choices: tuple[str, ...] | None = None  # only meaningful for input_type == "select"
 
 
 EDITABLE_SETTINGS: tuple[SettingField, ...] = (
@@ -65,6 +66,14 @@ EDITABLE_SETTINGS: tuple[SettingField, ...] = (
         "number",
         "Label interval (minutes)",
         "0 = label on every pipeline run, independent of fetch cadence otherwise.",
+    ),
+    SettingField(
+        "LABEL_ORDER",
+        "label_order",
+        "select",
+        "Label order",
+        "Which unlabeled stories a run picks first.",
+        choices=("newest_per_source", "oldest_first"),
     ),
     SettingField(
         "LABEL_CATEGORIES", "label_categories", "text", "Label categories", "Comma-separated."

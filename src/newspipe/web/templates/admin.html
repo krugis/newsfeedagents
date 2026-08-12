@@ -34,6 +34,12 @@
                  value="{{ value }}" autocomplete="off">
           {% elif field.input_type in ('number', 'optional_number') %}
           <input type="number" id="{{ field.env_var }}" name="{{ field.env_var }}" value="{{ value }}">
+          {% elif field.input_type == 'select' %}
+          <select id="{{ field.env_var }}" name="{{ field.env_var }}">
+            {% for choice in field.choices %}
+            <option value="{{ choice }}" {% if choice == value %}selected{% endif %}>{{ choice }}</option>
+            {% endfor %}
+          </select>
           {% else %}
           <input type="text" id="{{ field.env_var }}" name="{{ field.env_var }}" value="{{ value }}">
           {% endif %}

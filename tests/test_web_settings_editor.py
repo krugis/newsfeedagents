@@ -43,6 +43,22 @@ def test_build_candidate_blank_llm_api_key_means_unset():
     assert candidate.llm_api_key is None
 
 
+def test_build_candidate_accepts_valid_label_order():
+    candidate = settings_editor.build_candidate({"LABEL_ORDER": "oldest_first"})
+    assert candidate.label_order == "oldest_first"
+
+
+def test_build_candidate_rejects_invalid_label_order():
+    with pytest.raises(ValidationError):
+        settings_editor.build_candidate({"LABEL_ORDER": "bogus"})
+
+
+def test_label_order_field_has_both_choices():
+    field = next(f for f in settings_editor.EDITABLE_SETTINGS if f.field == "label_order")
+    assert field.input_type == "select"
+    assert field.choices == ("newest_per_source", "oldest_first")
+
+
 def test_field_display_value_formats_tuple_and_none():
     settings = Settings(label_categories=("a", "b"), retention_days=None)
     categories_field = next(

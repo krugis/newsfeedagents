@@ -2,15 +2,27 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from pydantic import ValidationError
 
 from newspipe.config import Settings, get_settings
 from newspipe.db.arrivals import insert_arrivals
-from newspipe.db.labels import insert_label, select_unlabeled_stories
+from newspipe.db.labels import (
+    insert_label,
+    select_unlabeled_stories,
+    select_unlabeled_story_sources,
+)
 from newspipe.dedup import run_dedup
 from newspipe.fetchers.base import RawItem
-from newspipe.labeling.labeler import PROMPT_VERSION, build_prompt, label_unlabeled
+from newspipe.labeling.labeler import (
+    PROMPT_VERSION,
+    _round_robin_select,
+    _select_for_labeling,
+    build_prompt,
+    label_unlabeled,
+)
 from newspipe.labeling.schema import HeadlineLabel, build_headline_label_model
 
 
@@ -385,3 +397,152 @@ def test_label_three_stories_live(db_conn, source_scope):
             "tooling_infra",
             "other",
         }
+
+
+# ---- labeling order (round-robin per source, newest first) ---------------
+
+
+def _row(story_id: int, source_id: int, hours_ago: float) -> dict:
+    now = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
+    return {
+        "story_id": story_id,
+        "source_id": source_id,
+        "first_seen_at": now - timedelta(hours=hours_ago),
+    }
+
+
+def test_round_robin_select_fair_across_sources():
+    rows = [
+        _row(1, source_id=10, hours_ago=1),
+        _row(2, source_id=10, hours_ago=2),
+        _row(3, source_id=10, hours_ago=3),
+        _row(4, source_id=20, hours_ago=0.5),
+    ]
+    # source 10 has 3 candidates, source 20 has 1 — one from each per round
+    # (by source_id order), newest within each source first
+    assert _round_robin_select(rows, limit=3) == [1, 4, 2]
+
+
+def test_round_robin_select_newest_first_within_source():
+    rows = [
+        _row(1, source_id=10, hours_ago=3),
+        _row(2, source_id=10, hours_ago=1),
+        _row(3, source_id=10, hours_ago=2),
+    ]
+    assert _round_robin_select(rows, limit=3) == [2, 3, 1]
+
+
+def test_round_robin_select_respects_limit():
+    rows = [_row(i, source_id=i % 3, hours_ago=i) for i in range(10)]
+    assert len(_round_robin_select(rows, limit=4)) == 4
+
+
+def test_round_robin_select_empty_rows():
+    assert _round_robin_select([], limit=10) == []
+
+
+def test_select_unlabeled_story_sources_earliest_arrival_wins(db_conn, source_scope):
+    sid_a = source_scope("zz-rr-srca")
+    sid_b = source_scope("zz-rr-srcb")
+    insert_arrivals(
+        db_conn,
+        sid_a,
+        [
+            RawItem(
+                external_id="zz-rr-a1", url="https://example.com/rr-a", title="Zz RR Shared Title"
+            )
+        ],
+    )
+    db_conn.commit()
+    run_dedup()
+    insert_arrivals(
+        db_conn,
+        sid_b,
+        [
+            RawItem(
+                external_id="zz-rr-b1", url="https://example.com/rr-b", title="Zz RR Shared Title"
+            )
+        ],
+    )
+    db_conn.commit()
+    run_dedup()
+
+    story = db_conn.execute(
+        """
+        SELECT s.story_id FROM stories s
+        JOIN arrivals a ON a.story_id = s.story_id
+        WHERE a.external_id = 'zz-rr-a1'
+        """
+    ).fetchone()
+
+    rows = select_unlabeled_story_sources(db_conn)
+    match = next(r for r in rows if r["story_id"] == story["story_id"])
+    assert match["source_id"] == sid_a  # source A's arrival came first
+
+
+def test_select_for_labeling_uses_round_robin_when_newest_per_source(monkeypatch):
+    patched = Settings(llm_api_key="k", label_order="newest_per_source")
+    monkeypatch.setattr("newspipe.labeling.labeler.get_settings", lambda: patched)
+    monkeypatch.setattr(
+        "newspipe.labeling.labeler.select_unlabeled_story_sources",
+        lambda conn: [_row(1, 10, 1), _row(2, 20, 1)],
+    )
+    captured = {}
+
+    def fake_select_unlabeled_stories(conn, limit=None, story_ids=None):
+        captured["story_ids"] = story_ids
+        return [{"story_id": sid} for sid in story_ids]
+
+    monkeypatch.setattr(
+        "newspipe.labeling.labeler.select_unlabeled_stories", fake_select_unlabeled_stories
+    )
+
+    result = _select_for_labeling(conn=None, limit=2, story_ids=None)
+
+    assert captured["story_ids"] is not None
+    assert len(result) == 2
+
+
+def test_select_for_labeling_uses_oldest_first_when_configured(monkeypatch):
+    patched = Settings(llm_api_key="k", label_order="oldest_first")
+    monkeypatch.setattr("newspipe.labeling.labeler.get_settings", lambda: patched)
+
+    def unexpected(conn):
+        raise AssertionError("should not be called in oldest_first mode")
+
+    monkeypatch.setattr("newspipe.labeling.labeler.select_unlabeled_story_sources", unexpected)
+    captured = {}
+
+    def fake_select_unlabeled_stories(conn, limit=None, story_ids=None):
+        captured["limit"] = limit
+        captured["story_ids"] = story_ids
+        return []
+
+    monkeypatch.setattr(
+        "newspipe.labeling.labeler.select_unlabeled_stories", fake_select_unlabeled_stories
+    )
+
+    _select_for_labeling(conn=None, limit=5, story_ids=None)
+
+    assert captured["limit"] == 5
+    assert captured["story_ids"] is None
+
+
+def test_select_for_labeling_story_ids_bypasses_strategy(monkeypatch):
+    def unexpected(conn):
+        raise AssertionError("should not be called when story_ids is given")
+
+    monkeypatch.setattr("newspipe.labeling.labeler.select_unlabeled_story_sources", unexpected)
+    captured = {}
+
+    def fake_select_unlabeled_stories(conn, limit=None, story_ids=None):
+        captured["story_ids"] = story_ids
+        return []
+
+    monkeypatch.setattr(
+        "newspipe.labeling.labeler.select_unlabeled_stories", fake_select_unlabeled_stories
+    )
+
+    _select_for_labeling(conn=None, limit=100, story_ids=[7, 8])
+
+    assert captured["story_ids"] == [7, 8]

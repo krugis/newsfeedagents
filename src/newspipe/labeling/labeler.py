@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from collections import deque
 from dataclasses import dataclass, field
 
 from langchain_openai import ChatOpenAI
@@ -19,7 +20,11 @@ from pydantic import BaseModel
 
 from newspipe.config import get_settings
 from newspipe.db.engine import connect
-from newspipe.db.labels import insert_label, select_unlabeled_stories
+from newspipe.db.labels import (
+    insert_label,
+    select_unlabeled_stories,
+    select_unlabeled_story_sources,
+)
 from newspipe.labeling.schema import build_headline_label_model
 
 logger = logging.getLogger(__name__)
@@ -109,17 +114,57 @@ async def _batch_label(stories: list[dict]) -> list[BaseModel | Exception]:
     )
 
 
+def _round_robin_select(rows: list[dict], limit: int) -> list[int]:
+    """Fairly interleave unlabeled stories across sources, newest first.
+
+    `rows` are {"story_id", "source_id", "first_seen_at"}, one per unlabeled
+    story (see `select_unlabeled_story_sources`). Returns up to `limit`
+    story_ids, round-robining across sources one story per round — so no
+    single source can fill the whole budget — newest within each source
+    first. A source with fewer stories than its "fair share" simply runs dry
+    early, and its unused rounds go to the other sources automatically.
+    """
+    by_source: dict[int, deque[int]] = {}
+    for row in sorted(rows, key=lambda r: r["first_seen_at"], reverse=True):
+        by_source.setdefault(row["source_id"], deque()).append(row["story_id"])
+
+    queues = [by_source[source_id] for source_id in sorted(by_source)]
+    selected: list[int] = []
+    while queues and len(selected) < limit:
+        for queue in list(queues):
+            if len(selected) == limit:
+                break
+            selected.append(queue.popleft())
+            if not queue:
+                queues.remove(queue)
+    return selected
+
+
+def _select_for_labeling(conn, limit: int | None, story_ids: list[int] | None) -> list[dict]:
+    """Pick which unlabeled stories to label this run."""
+    if story_ids is not None:
+        return select_unlabeled_stories(conn, story_ids=story_ids)
+    settings = get_settings()
+    if limit is not None and settings.label_order == "newest_per_source":
+        candidates = select_unlabeled_story_sources(conn)
+        selected_ids = _round_robin_select(candidates, limit)
+        return select_unlabeled_stories(conn, story_ids=selected_ids) if selected_ids else []
+    return select_unlabeled_stories(conn, limit=limit)
+
+
 def label_unlabeled(limit: int | None = None, story_ids: list[int] | None = None) -> LabelStats:
     """Label unlabeled stories and persist one `labels` row each.
 
-    Failures are counted and left unlabeled so a later run retries them; a
-    failed story never blocks the rest of the batch.
+    Which stories are picked is governed by `Settings.label_order` (see
+    `_select_for_labeling`); explicit `story_ids` always wins (used by tests
+    and targeted relabeling). Failures are counted and left unlabeled so a
+    later run retries them; a failed story never blocks the rest of the batch.
     """
     settings = get_settings()
     if not settings.llm_api_key:
         raise RuntimeError("LLM_API_KEY is not set — set it in .env to label")
     with connect() as conn:
-        stories = select_unlabeled_stories(conn, limit=limit, story_ids=story_ids)
+        stories = _select_for_labeling(conn, limit, story_ids)
         stats = LabelStats(stories_attempted=len(stories))
         if not stories:
             return stats

@@ -62,3 +62,12 @@ def test_scheduler_cron_defaults_reproduce_original_schedule():
 
 def test_label_interval_minutes_default_is_every_run():
     assert Settings().label_interval_minutes == 0
+
+
+def test_label_order_default_is_newest_per_source():
+    assert Settings().label_order == "newest_per_source"
+
+
+def test_label_order_rejects_invalid_value():
+    with pytest.raises(ValidationError):
+        Settings(label_order="not_a_real_order")

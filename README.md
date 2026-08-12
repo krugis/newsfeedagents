@@ -165,8 +165,21 @@ By default labeling runs on every pipeline tick, bounded by
 `LABEL_LIMIT_PER_RUN`; set `LABEL_INTERVAL_MINUTES` to throttle it to a
 cadence independent of the fetch/run schedule (tracked in `pipeline_state`).
 
+**Which unlabeled stories get picked** is `LABEL_ORDER` (default
+`newest_per_source`): round-robin across sources, newest story first within
+each — `labeling/labeler.py::_round_robin_select` attributes each story to
+whichever source's arrival broke it first
+(`db/labels.py::select_unlabeled_story_sources`), then takes one story per
+source per round until the budget is spent, so a single prolific source
+(e.g. the Google News feeds) can't fill the whole run and fresh stories from
+quieter sources still get labeled promptly — this is what lets the front
+page ever show *today's* news instead of stalling behind an older backlog.
+Set `LABEL_ORDER=oldest_first` for the original pure-FIFO behavior. Either
+way, an explicit `story_ids` target (e.g. targeted relabeling) bypasses the
+strategy entirely.
+
 ```bash
-uv run python -m newspipe label --limit 10   # label up to 10 oldest unlabeled
+uv run python -m newspipe label --limit 10   # label up to 10, per LABEL_ORDER
 ```
 
 ## Pipeline run (LangGraph)
@@ -352,6 +365,7 @@ Every setting lives in `.env` (see `.env.example` for the full list):
 | `BATCH_CONCURRENCY` | `8`                                                   | Max concurrent LLM calls   |
 | `LABEL_LIMIT_PER_RUN` | `100`                                               | Cap on unlabeled stories labeled per `label` run (backfill guard) |
 | `LABEL_INTERVAL_MINUTES` | `0`                                              | Labeling cadence, independent of fetch; `0` = every run |
+| `LABEL_ORDER`       | `newest_per_source`                                   | Which unlabeled stories a run picks: `newest_per_source` (round-robin, fresh news first) or `oldest_first` (FIFO) |
 | `LABEL_CATEGORIES`  | `model_release,research,industry,funding,policy_regulation,tooling_infra,other` | Comma-separated category enum for labeling |
 | `IMPORTANCE_MIN` / `IMPORTANCE_MAX` | `1` / `10`                          | Importance scale bounds (inclusive) |
 | `SCHEDULER_CRON_MINUTE` / `SCHEDULER_CRON_HOUR` | `5` / `*`                | Pipeline run cadence (APScheduler cron fields) |

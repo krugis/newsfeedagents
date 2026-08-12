@@ -1,6 +1,7 @@
-"""Flask app factory for the newspipe web UI: login + admin + news browser.
+"""Flask app factory for the newspipe web UI.
 
-Two pages behind one login: `/admin` (configurable values + fetch/dedup/label
+Three pages: a public `/` front page (today's top news, no login), and two
+pages behind one login — `/admin` (configurable values + fetch/dedup/label
 triggers) and `/news` (a paginated, DB-dump-style view of `arrivals`).
 """
 
@@ -18,6 +19,7 @@ from newspipe.web import settings_editor
 from newspipe.web.actions import ActionBusyError, run_action
 from newspipe.web.auth import bp as auth_bp
 from newspipe.web.auth import login_required
+from newspipe.web.frontpage import bp as frontpage_bp
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -52,11 +54,6 @@ def _summarize(name: str, stats: dict) -> str:
             f"{stats.get('failed', 0)} failed ({duration}s)"
         )
     return str(stats)  # pragma: no cover - unreachable, name is URL-validated upstream
-
-
-@admin_bp.route("/")
-def index():
-    return redirect(url_for("admin.admin_page"))
 
 
 @admin_bp.route("/admin", methods=["GET"])
@@ -140,4 +137,5 @@ def create_app() -> Flask:
     app.secret_key = settings.web_session_secret
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
+    app.register_blueprint(frontpage_bp)
     return app

@@ -116,3 +116,135 @@ table.news td:last-child {
   flex-direction: column;
   gap: 0.25rem;
 }
+
+/* --- front page (newspaper) --- */
+
+.masthead {
+  text-align: center;
+  border-bottom: 4px double #8888;
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.75rem;
+}
+
+.masthead h1 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 3rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin: 0.25rem 0 0;
+}
+
+.masthead .tagline {
+  margin: 0;
+  font-style: italic;
+  opacity: 0.75;
+}
+
+.masthead .dateline {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+
+.edition-note {
+  text-transform: none;
+  letter-spacing: normal;
+  font-style: italic;
+}
+
+.empty {
+  text-align: center;
+  opacity: 0.7;
+  padding: 2rem 0;
+}
+
+.badges {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  margin-bottom: 0.35rem;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid #8888;
+  opacity: 0.85;
+}
+
+.badge-hot {
+  background: #cf222e1a;
+  border-color: #cf222e;
+  color: #cf222e;
+}
+
+.badge-category {
+  background: #8888;
+}
+
+.badge-importance {
+  background: transparent;
+}
+
+.headline {
+  font-family: Georgia, "Times New Roman", serif;
+  line-height: 1.15;
+  margin: 0 0 0.35rem;
+}
+
+.headline a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.headline a:hover {
+  text-decoration: underline;
+}
+
+.lead-story .headline {
+  font-size: 2.1rem;
+}
+
+.lead-story {
+  border-bottom: 1px solid #8888;
+  padding-bottom: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.dek {
+  font-style: italic;
+  opacity: 0.85;
+  margin: 0 0 0.35rem;
+}
+
+.byline {
+  font-size: 0.8rem;
+  opacity: 0.65;
+  margin: 0;
+}
+
+.story-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.story-item {
+  border-bottom: 1px solid #8884;
+  padding: 1rem 0;
+}
+
+.story-item:last-child {
+  border-bottom: none;
+}
+
+.story-item .headline {
+  font-size: 1.15rem;
+}

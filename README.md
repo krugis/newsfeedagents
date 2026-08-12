@@ -247,13 +247,21 @@ see [Scheduling](#scheduling-apscheduler--systemd).
 
 ## Web UI
 
-`python -m newspipe web` serves a small two-page site behind one admin login
-(session cookie, single account from `ADMIN_USERNAME`/`ADMIN_PASSWORD` — no
-user table). Binds to `127.0.0.1:8010` by default.
+`python -m newspipe web` serves a small three-page site. Binds to
+`127.0.0.1:8010` by default; publicly deployed at **https://news.agate.tr**
+(nginx TLS-terminates and reverse-proxies to this port; the process itself
+runs under `gunicorn -w 1` via `deploy/newspipe-web.service`, not the Flask
+dev server used by `python -m newspipe web` directly — see that unit file).
 
-- **`/admin`** — every editable setting from [Configuration](#configuration)
+- **`/`** — public, no login: today's (UTC) labeled, GenAI/ML-relevant
+  stories, hottest and most important first, lead story + list — the actual
+  point of the pipeline. Falls back to the most recent day with any stories
+  so it's never blank before today's first labeling run.
+- **`/admin`** and **`/news`** sit behind one admin login (session cookie,
+  single account from `ADMIN_USERNAME`/`ADMIN_PASSWORD` — no user table).
+  `/admin` renders every editable setting from [Configuration](#configuration)
   except `DATABASE_URL` (changing the DB connection via a form served by a
-  connection to that same DB would be a footgun) rendered as a form; saving
+  connection to that same DB would be a footgun) as a form; saving
   re-validates through the same `Settings` model used everywhere else (so an
   invalid combination like `IMPORTANCE_MIN >= IMPORTANCE_MAX` is rejected,
   nothing written) and rewrites `.env` in place, taking effect on the web
@@ -261,15 +269,16 @@ user table). Binds to `127.0.0.1:8010` by default.
   won't see the change until it's restarted.** The same page has three
   buttons — Start Digest (Collect News), Prepare News, Start Labeling —
   running `fetch`/`dedup`/`label` synchronously and showing the result;
-  an in-process lock rejects a second trigger while one is already running.
-- **`/news`** — a plain, unstyled table of `arrivals` (date, source, title
+  an in-process lock rejects a second trigger while one is already running
+  (this is why the systemd unit pins `-w 1`: the lock is per-process).
+  `/news` is a plain, unstyled table of `arrivals` (date, source, title
   truncated to 100 chars), newest first, paginated at 10 or 20 rows per page.
 
-Security is scoped to "trusted single operator on their own server", matching
-the rest of the project: `ADMIN_PASSWORD` is plaintext in `.env` (same as
-`LLM_API_KEY`), there's no CSRF protection on the forms, and it's Flask's
-built-in dev server, not a production WSGI setup. Don't change `WEB_HOST` to
-expose it beyond localhost without addressing those first.
+Security is scoped to "trusted single operator on their own server": the
+front page shows nothing sensitive, but `/admin`'s login has no
+rate-limiting or CSRF protection — `ADMIN_PASSWORD` is plaintext in `.env`
+(same handling as `LLM_API_KEY`). Acceptable for a real password over HTTPS
+behind a single operator; revisit if that stops being true.
 
 ## Logging
 

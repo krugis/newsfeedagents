@@ -6,15 +6,18 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-  {% if session.get('authenticated') %}
   <nav>
+    <a href="{{ url_for('frontpage.frontpage') }}">Top News</a>
+    {% if session.get('authenticated') %}
     <a href="{{ url_for('admin.admin_page') }}">Admin</a>
     <a href="{{ url_for('admin.news_page') }}">News</a>
     <form method="post" action="{{ url_for('auth.logout') }}" class="inline">
       <button type="submit">Logout</button>
     </form>
+    {% else %}
+    <a href="{{ url_for('auth.login') }}">Admin Login</a>
+    {% endif %}
   </nav>
-  {% endif %}
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
     <ul class="flashes">

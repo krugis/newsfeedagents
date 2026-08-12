@@ -14,6 +14,14 @@ from newspipe.fetchers.base import RawItem
 from newspipe.web.app import create_app
 
 
+def _backdate_story(db_conn, story_id, when):
+    db_conn.execute(
+        "UPDATE stories SET first_seen_at = %s, last_seen_at = %s WHERE story_id = %s",
+        (when, when, story_id),
+    )
+    db_conn.commit()
+
+
 def _make_labeled_story(db_conn, source_scope, name, external_id, title, **label_kwargs):
     sid = source_scope(name)
     insert_arrivals(
@@ -140,3 +148,53 @@ def test_select_most_recent_labeled_day_finds_todays_story(db_conn, source_scope
     )
     day = select_most_recent_labeled_day(db_conn)
     assert day == datetime.now(UTC).date()
+
+
+def test_frontpage_day_picker_shows_last_7_days_newest_first(client):
+    resp = client.get("/")
+    body = resp.data.decode()
+    today = datetime.now(UTC).date()
+    expected_days = [(today - timedelta(days=n)).isoformat() for n in range(7)]
+
+    positions = [body.index(f"day={d}") for d in expected_days]
+
+    assert positions == sorted(positions)
+
+
+def test_frontpage_day_param_selects_that_day(db_conn, source_scope, client):
+    target_day = datetime.now(UTC).date() - timedelta(days=3)
+    story_id = _make_labeled_story(
+        db_conn,
+        source_scope,
+        "zz-front-day",
+        "zz-front-day-1",
+        "Zz Front Specific Day Story",
+        is_hot=True,
+        importance=7,
+    )
+    _backdate_story(
+        db_conn,
+        story_id,
+        datetime(target_day.year, target_day.month, target_day.day, 12, tzinfo=UTC),
+    )
+
+    resp = client.get(f"/?day={target_day.isoformat()}")
+
+    assert resp.status_code == 200
+    assert b"Zz Front Specific Day Story" in resp.data
+    assert target_day.strftime("%A, %B").encode() in resp.data
+
+
+def test_frontpage_day_outside_window_falls_back_to_default(client):
+    too_old_day = datetime.now(UTC).date() - timedelta(days=30)
+    too_old_formatted = too_old_day.strftime("%A, %B %-d, %Y")
+
+    resp = client.get(f"/?day={too_old_day.isoformat()}")
+
+    assert resp.status_code == 200
+    assert too_old_formatted.encode() not in resp.data
+
+
+def test_frontpage_invalid_day_format_is_ignored(client):
+    resp = client.get("/?day=not-a-date")
+    assert resp.status_code == 200

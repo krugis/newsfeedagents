@@ -6,10 +6,16 @@
   <p class="tagline">Top GenAI/ML News, curated hourly</p>
   <div class="dateline">
     {{ shown_day.strftime('%A, %B %-d, %Y') }}
-    {% if not is_today %}
+    {% if used_fallback %}
     <span class="edition-note">— no stories yet today; showing the latest edition</span>
     {% endif %}
   </div>
+  <nav class="day-picker">
+    {% for day in selectable_days %}
+    <a class="day-pill{% if day == shown_day %} day-pill-active{% endif %}"
+       href="{{ url_for('frontpage.frontpage', day=day.isoformat()) }}">{{ day.strftime('%a %-d') }}</a>
+    {% endfor %}
+  </nav>
 </header>
 
 {% if not lead %}

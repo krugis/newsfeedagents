@@ -49,21 +49,29 @@ def select_top_stories(
     ).fetchall()
 
 
-def select_most_recent_labeled_day(conn: psycopg.Connection) -> date | None:
+def select_most_recent_labeled_day(
+    conn: psycopg.Connection, since: datetime | None = None
+) -> date | None:
     """The most recent UTC calendar day with any labeled, relevant story.
 
     Used to keep the front page non-empty on a quiet day (before today has
-    any labeled stories yet).
+    any labeled stories yet). `since` optionally bounds the search (e.g. to
+    the selectable day-picker window) so the fallback never reaches further
+    back than what's actually pickable.
     """
-    row = conn.execute(
+    sql = (
         _LATEST_LABEL_CTE
         + """
         SELECT (s.first_seen_at AT TIME ZONE 'UTC')::date AS day
           FROM stories s
           JOIN latest_labels ll ON ll.story_id = s.story_id
          WHERE ll.is_genai_ml_relevant
-         ORDER BY s.first_seen_at DESC
-         LIMIT 1
         """
-    ).fetchone()
+    )
+    params: list[datetime] = []
+    if since is not None:
+        sql += " AND s.first_seen_at >= %s"
+        params.append(since)
+    sql += " ORDER BY s.first_seen_at DESC LIMIT 1"
+    row = conn.execute(sql, tuple(params)).fetchone()
     return row["day"] if row else None

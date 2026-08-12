@@ -154,6 +154,35 @@ table.news td:last-child {
   font-style: italic;
 }
 
+.day-picker {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+}
+
+.day-pill {
+  display: inline-block;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid #8888;
+  font-size: 0.8rem;
+  text-transform: none;
+  letter-spacing: normal;
+  text-decoration: none;
+  color: inherit;
+}
+
+.day-pill:hover {
+  border-color: currentColor;
+}
+
+.day-pill-active {
+  background: #8888;
+  font-weight: 700;
+}
+
 .empty {
   text-align: center;
   opacity: 0.7;

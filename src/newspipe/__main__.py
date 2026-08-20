@@ -42,6 +42,9 @@ def main(argv: list[str] | None = None) -> int:
         help="report what would be deleted without deleting it",
     )
     sub.add_parser("web", help="run the admin/news web UI (login + config + fetch/dedup/label)")
+    sub.add_parser(
+        "telegram-bot", help="run the Telegram news bot (@mention/command replies + daily push)"
+    )
 
     args = parser.parse_args(argv)
 
@@ -80,6 +83,10 @@ def main(argv: list[str] | None = None) -> int:
         settings = get_settings()
         create_app().run(host=settings.web_host, port=settings.web_port)
         return 0
+    if args.command == "telegram-bot":
+        from newspipe.telegram_bot import bot
+
+        return bot.main()
 
     parser.error(f"unknown command: {args.command!r}")
     return 2  # pragma: no cover

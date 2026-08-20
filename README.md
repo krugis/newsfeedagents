@@ -109,6 +109,7 @@ logs/                   # rotating JSON log files (created at runtime)
 | `python -m newspipe scheduler` | Run the scheduler in the foreground (systemd normally runs it). |
 | `python -m newspipe retention` | Purge news past `RETENTION_DAYS` (no-op unless it's set). `--dry-run` reports counts without deleting. |
 | `python -m newspipe web` | Run the admin/news web UI on `WEB_HOST:WEB_PORT` (default `127.0.0.1:8010`). |
+| `python -m newspipe telegram-bot` | Run the Telegram news bot (see [Telegram bot](#telegram-bot)). |
 | `python -m newspipe.db.migrate` | Apply pending schema migrations (idempotent). |
 | `python scripts/seed_sources.py` | Upsert the Phase 1 source registry (idempotent). |
 
@@ -308,6 +309,37 @@ rate-limiting or CSRF protection — `ADMIN_PASSWORD` is plaintext in `.env`
 (same handling as `LLM_API_KEY`). Acceptable for a real password over HTTPS
 behind a single operator; revisit if that stops being true.
 
+## Telegram bot
+
+`python -m newspipe telegram-bot` (`src/newspipe/telegram_bot/`) runs an
+`aiogram` bot that answers news requests in any Telegram group it's added
+to, plus an optional scheduled daily push. Requires `TELEGRAM_BOT_TOKEN`
+(from [@BotFather](https://t.me/BotFather)) — refuses to start without one,
+same pattern as `ADMIN_PASSWORD`.
+
+- **Reactive:** `/news`, `/news 6h`, `/news today` (or `/digest`), or
+  @-mentioning the bot the same way in a group. Telegram's default bot
+  "privacy mode" already filters what a group forwards to the bot down to
+  commands, @mentions, and replies to its own messages — no manual
+  mention-detection needed for the common case.
+- **Scheduled:** if `TELEGRAM_DIGEST_CHAT_IDS` (comma-separated, negative
+  for groups) is set, a daily job (`TELEGRAM_DAILY_DIGEST_CRON_HOUR`/
+  `_MINUTE`, default 08:00 UTC) pushes "today so far" to each listed chat.
+  Empty = no scheduled push; reactive replies work regardless.
+- Queries the same `stories`/`labels` tables as the front page
+  (`select_top_stories`, see [Sources](#sources)) directly — no separate
+  API layer, since the bot runs in the same Python process/venv as the rest
+  of the pipeline.
+- `TELEGRAM_DEFAULT_WINDOW_HOURS` (default 3) is the fallback lookback when
+  a request doesn't specify one; `TELEGRAM_DIGEST_LIMIT` (default 10) caps
+  stories per message.
+
+Unlike a WhatsApp bot (evaluated and deliberately not built — see the
+project's WhatsApp design discussion), this uses Telegram's official Bot
+API throughout: no ToS violation, no ban risk, no unofficial protocol
+client. Run it under systemd via `deploy/telegram-bot.service` (same
+install pattern as `newspipe.service`).
+
 ## Logging
 
 Structured JSON-lines logging (`logging_setup.py`) to stdout **and** a rotating
@@ -394,6 +426,11 @@ Every setting lives in `.env` (see `.env.example` for the full list):
 | `WEB_HOST` / `WEB_PORT` | `127.0.0.1` / `8010`                              | Web UI bind address (see [Web UI](#web-ui)) |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / *(unset — login refused)*      | Web UI login; login is disabled until `ADMIN_PASSWORD` is set |
 | `WEB_SESSION_SECRET` | *(auto-generated per process start)*                | Signs the session cookie; set explicitly for sessions to survive a restart |
+| `TELEGRAM_BOT_TOKEN` | *(unset — bot refuses to start)*                     | Token from @BotFather (see [Telegram bot](#telegram-bot)) |
+| `TELEGRAM_DIGEST_CHAT_IDS` | *(unset — no scheduled push)*                  | Comma-separated chat ids for the scheduled daily push |
+| `TELEGRAM_DAILY_DIGEST_CRON_HOUR` / `_MINUTE` | `8` / `0`                  | Scheduled daily push cadence (APScheduler cron fields) |
+| `TELEGRAM_DEFAULT_WINDOW_HOURS` | `3`                                       | Fallback lookback window when a request doesn't specify one |
+| `TELEGRAM_DIGEST_LIMIT` | `10`                                              | Max stories per digest message |
 
 ## Database schema
 

@@ -119,6 +119,18 @@ class Settings(BaseSettings):
     # tool; set it explicitly if that's undesirable.
     web_session_secret: str = Field(default_factory=lambda: secrets.token_hex(32))
 
+    # Telegram bot (see telegram_bot/ package). Token from @BotFather; unset =
+    # the bot process refuses to start (same "no default-credential footgun"
+    # pattern as ADMIN_PASSWORD). Reactive @mention/command replies work in
+    # any group the bot is a member of; the scheduled daily push only goes to
+    # the opt-in chat id allow-list below (empty = no scheduled push at all).
+    telegram_bot_token: str | None = None
+    telegram_digest_chat_ids: tuple[int, ...] = ()
+    telegram_daily_digest_cron_hour: str = "8"
+    telegram_daily_digest_cron_minute: str = "0"
+    telegram_default_window_hours: int = 3
+    telegram_digest_limit: int = 10
+
     @field_validator("label_categories", mode="before")
     @classmethod
     def _parse_categories(cls, value: object) -> object:
@@ -128,6 +140,14 @@ class Settings(BaseSettings):
             if not categories:
                 raise ValueError("label_categories must not be empty")
             return categories
+        return value
+
+    @field_validator("telegram_digest_chat_ids", mode="before")
+    @classmethod
+    def _parse_chat_ids(cls, value: object) -> object:
+        """Accept a comma-separated env string (`TELEGRAM_DIGEST_CHAT_IDS=-100123,-100456`)."""
+        if isinstance(value, str):
+            return tuple(int(v.strip()) for v in value.split(",") if v.strip())
         return value
 
     @model_validator(mode="after")

@@ -104,6 +104,41 @@ def test_hn_marks_front_page_hits(monkeypatch):
     assert hit_items
     assert hit_items[0].raw.get("hn_front_page") is True
     assert all(i.url.startswith("http") for i in items)
+    # the fixture's hit has a real external "url" — must use it, not the HN
+    # discussion-page fallback (regression: the fetcher used to read the
+    # wrong field name and silently fall back to the discussion page for
+    # every link post, see hn_algolia.py::_hit_to_item)
+    assert hit_items[0].url == hit["url"]
+    assert "news.ycombinator.com" not in hit_items[0].url
+
+
+def test_hn_falls_back_to_discussion_page_when_no_external_url(monkeypatch):
+    """A Show HN / Ask HN text post has no "url" field — the HN discussion
+    page is the correct (only) destination for those, not a bug."""
+    hit = {
+        "objectID": "999",
+        "title": "Ask HN: something",
+        "author": "x",
+        "points": 1,
+        "num_comments": 0,
+        "created_at_i": 1700000000,
+    }
+    search = {"hits": [hit]}
+    front = {"hits": []}
+
+    def fake(client, url, *, params=None):
+        if "search_by_date" in url:
+            return httpx.Response(
+                200, content=json.dumps(search), headers={"content-type": "application/json"}
+            )
+        return httpx.Response(
+            200, content=json.dumps(front), headers={"content-type": "application/json"}
+        )
+
+    monkeypatch.setattr(hn_algolia, "get_with_retry", fake)
+    src = _source("hn_algolia", {"base_url": "https://hn.algolia.com/api/v1/", "keywords": ["LLM"]})
+    items = hn_algolia.fetch(src)
+    assert items[0].url == "https://news.ycombinator.com/item?id=999"
 
 
 def test_hn_window_uses_last_polled_at(monkeypatch):

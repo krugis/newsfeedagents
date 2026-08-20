@@ -78,10 +78,12 @@ def _hit_to_item(hit: dict) -> RawItem | None:
     title = str(hit.get("story_title") or hit.get("title") or "").strip()
     if not object_id or not title:
         return None
-    url = (
-        str(hit.get("story_url") or "").strip()
-        or f"https://news.ycombinator.com/item?id={object_id}"
-    )
+    # Algolia's story-type hits (tags=story, what we always query) carry the
+    # external link as "url" — "story_url" is a comment-hit field (pointing
+    # at its parent story) that never appears here, so that key was always
+    # silently missing and every link post fell back to the HN discussion
+    # page instead of its real article URL.
+    url = str(hit.get("url") or "").strip() or f"https://news.ycombinator.com/item?id={object_id}"
     published_at = None
     created_at_i = hit.get("created_at_i")
     if created_at_i:

@@ -7,7 +7,14 @@ the hour-slot thread_id (`run-YYYYMMDD-HH`), so a crash that left a
 checkpoint resumes instead of restarting. `max_instances=1` prevents overlap;
 `coalesce=True` and `misfire_grace_time=600` keep late ticks sane.
 
-When `Settings.retention_days` is set, a second daily job purges expired news
+A second, once-a-day job (`Settings.daily_backfill_cron_hour`/
+`daily_backfill_cron_minute`, default 06:30 UTC) runs the same graph with
+`backfill=True`, forcing a full 24h catch-up window on fetchers that support
+one (currently only Hacker News — see `fetchers/hn_algolia.py`) instead of
+the hourly job's "since last poll" window. It's insurance against index/feed
+lag or a missed hourly tick, not a replacement for the hourly job.
+
+When `Settings.retention_days` is set, a third daily job purges expired news
 data (see `retention.py`).
 
 Run it with `python -m newspipe scheduler` or via the systemd unit
@@ -36,12 +43,26 @@ def hour_slot_thread_id(now: datetime | None = None) -> str:
     return f"run-{now:%Y%m%d-%H}"
 
 
+def daily_backfill_thread_id(now: datetime | None = None) -> str:
+    """The checkpoint thread_id for a backfill run started on this day."""
+    now = now or datetime.now(UTC)
+    return f"backfill-{now:%Y%m%d}"
+
+
 def tick() -> None:
-    """One scheduled pipeline invocation (safe for APScheduler to call)."""
-    thread_id = hour_slot_thread_id()
-    logger.info("tick_start", extra={"extra_thread_id": thread_id})
+    """One scheduled hourly pipeline invocation (safe for APScheduler to call)."""
+    _run_tick(hour_slot_thread_id(), backfill=False)
+
+
+def daily_backfill_tick() -> None:
+    """One scheduled daily backfill invocation (safe for APScheduler to call)."""
+    _run_tick(daily_backfill_thread_id(), backfill=True)
+
+
+def _run_tick(thread_id: str, *, backfill: bool) -> None:
+    logger.info("tick_start", extra={"extra_thread_id": thread_id, "extra_backfill": backfill})
     try:
-        result = run_pipeline(thread_id)
+        result = run_pipeline(thread_id, backfill=backfill)
     except Exception as exc:  # noqa: BLE001 - a bad tick must not kill the loop
         logger.error(
             "tick_failed",
@@ -79,6 +100,16 @@ def build_scheduler() -> BlockingScheduler:
         max_instances=1,
         coalesce=True,
         misfire_grace_time=600,
+    )
+    scheduler.add_job(
+        daily_backfill_tick,
+        CronTrigger(
+            hour=settings.daily_backfill_cron_hour, minute=settings.daily_backfill_cron_minute
+        ),
+        id="daily-backfill",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
     )
     if settings.retention_days:
         scheduler.add_job(

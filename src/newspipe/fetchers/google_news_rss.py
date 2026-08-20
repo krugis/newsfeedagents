@@ -22,8 +22,14 @@ from newspipe.fetchers.base import RawItem, build_client, get_with_retry
 from newspipe.models.schemas import Source
 
 
-def fetch(source_row: Source, client: httpx.Client | None = None) -> list[RawItem]:
-    """Fetch a Google News RSS search feed and parse its items."""
+def fetch(
+    source_row: Source, client: httpx.Client | None = None, *, backfill: bool = False
+) -> list[RawItem]:
+    """Fetch a Google News RSS search feed and parse its items.
+
+    ``backfill`` is accepted for interface parity with the other fetchers but
+    unused here: a search feed has no time-window query to widen.
+    """
     client = client or build_client()
     feed_url = source_row.config["feed_url"]
     resp = get_with_retry(client, feed_url)

@@ -39,7 +39,7 @@ def _thread(prefix: str) -> str:
 def _noop_fetcher(calls: dict, external_id: str, title: str):
     """A fetcher that records calls and returns a single fixed item (no network)."""
 
-    def fake(source):  # noqa: ARG001
+    def fake(source, *, backfill=False):  # noqa: ARG001
         calls["n"] += 1
         from newspipe.fetchers.base import RawItem
 
@@ -147,7 +147,7 @@ def test_fanout_fetches_each_due_source(db_conn, source_scope, checkpointer, mon
 def test_source_error_lands_in_state_not_crash(db_conn, source_scope, checkpointer, monkeypatch):
     calls = {"n": 0}
 
-    def failing_fetcher(source):
+    def failing_fetcher(source, *, backfill=False):
         calls["n"] += 1
         raise RuntimeError("fetch exploded")
 

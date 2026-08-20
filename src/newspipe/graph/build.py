@@ -54,19 +54,21 @@ def fan_out(state: PipelineState) -> list[Send] | str:
     due = state.get("due_source_ids", [])
     if not due:
         return "dedup"
-    return [Send("fetch_source", {"source_id": sid}) for sid in due]
+    backfill = state.get("backfill", False)
+    return [Send("fetch_source", {"source_id": sid, "backfill": backfill}) for sid in due]
 
 
 def fetch_source(state: PipelineState) -> dict:
     """Fetch one source and persist arrivals; never raises — errors land in state."""
     source_id = state["source_id"]
+    backfill = state.get("backfill", False)
     now = datetime.now(UTC)
     with connect() as conn:
         source = select_source_by_id(conn, source_id)
         if source is None:
             return {"errors": [f"source {source_id}: not found"]}
         try:
-            items = get_fetcher(source.method)(source)
+            items = get_fetcher(source.method)(source, backfill=backfill)
             new_ids = insert_arrivals_returning(conn, source.source_id, items)
             update_last_polled(conn, source.source_id, now)
         except Exception as exc:  # noqa: BLE001 - per-source isolation
@@ -175,7 +177,7 @@ def build_graph(checkpointer, interrupt_before: list[str] | None = None) -> Comp
     return builder.compile(checkpointer=checkpointer, interrupt_before=interrupt_before)
 
 
-def initial_state(thread_id: str) -> PipelineState:
+def initial_state(thread_id: str, backfill: bool = False) -> PipelineState:
     """The starting state for a fresh run under `thread_id`."""
     return {
         "thread_id": thread_id,
@@ -188,15 +190,18 @@ def initial_state(thread_id: str) -> PipelineState:
         "errors": [],
         "dedup_stats": {},
         "stats": {},
+        "backfill": backfill,
     }
 
 
-def run_pipeline(thread_id: str | None = None) -> dict:
+def run_pipeline(thread_id: str | None = None, backfill: bool = False) -> dict:
     """Invoke the graph once under `thread_id` (default hour-slot).
 
     Returns the final pipeline state. When the thread already has a checkpoint
     (a crashed run), langgraph requires `input=None` to resume — passing an
     input would restart the run — so the checkpoint existence check decides.
+    `backfill` only affects a fresh run's initial state (a resumed run keeps
+    whatever the checkpoint already recorded).
     """
     settings = get_settings()
     thread_id = thread_id or f"run-{datetime.now(UTC):%Y%m%d-%H}"
@@ -205,7 +210,7 @@ def run_pipeline(thread_id: str | None = None) -> dict:
         graph = build_graph(saver)
         config = {"configurable": {"thread_id": thread_id}}
         has_checkpoint = saver.get_tuple(config) is not None
-        run_input = None if has_checkpoint else initial_state(thread_id)
+        run_input = None if has_checkpoint else initial_state(thread_id, backfill=backfill)
         return graph.invoke(run_input, config=config)
 
 

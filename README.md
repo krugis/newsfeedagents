@@ -217,13 +217,28 @@ fetch superstep is restored from the checkpoint, never re-run (verified in
 
 ## Scheduling (APScheduler + systemd)
 
-`python -m newspipe scheduler` runs a `BlockingScheduler`: hourly at minute 5
-by default (`SCHEDULER_CRON_MINUTE`/`SCHEDULER_CRON_HOUR`, any APScheduler
-cron expression), `max_instances=1` (no overlapping runs), `coalesce=True`,
-`misfire_grace_time=600`. Each tick invokes the graph under the hour-slot
-thread id `run-YYYYMMDD-HH`, so a crash that left a checkpoint resumes instead
-of restarting. If `RETENTION_DAYS` is set, a second daily job (03:00 UTC)
-purges expired news — see [Retention](#retention).
+`python -m newspipe scheduler` runs a `BlockingScheduler` with two pipeline
+jobs plus retention:
+
+- **Hourly (incremental):** hourly at minute 5 by default
+  (`SCHEDULER_CRON_MINUTE`/`SCHEDULER_CRON_HOUR`, any APScheduler cron
+  expression). Each tick invokes the graph under the hour-slot thread id
+  `run-YYYYMMDD-HH`, fetching all due sources and inserting only genuinely
+  new items (dedup on external_id/title-hash) — "what's new since last
+  check." A crash that left a checkpoint resumes instead of restarting.
+- **Daily backfill:** once a day, 06:30 UTC by default
+  (`DAILY_BACKFILL_CRON_HOUR`/`DAILY_BACKFILL_CRON_MINUTE`), thread id
+  `backfill-YYYYMMDD`. Forces a full 24h catch-up window on fetchers that
+  support one — currently only Hacker News, whose hourly window is normally
+  "since last poll" (see `fetchers/hn_algolia.py`) — as insurance against
+  index/feed lag or a missed hourly tick. RSS/sitemap/Google News sources
+  have no time-window query to widen, so this is a no-op extra fetch for
+  them beyond the usual dedup.
+
+Both jobs use `max_instances=1` (no overlapping runs), `coalesce=True`, and a
+`misfire_grace_time` (600s / 3600s respectively). If `RETENTION_DAYS` is set,
+a third daily job (03:00 UTC) purges expired news — see
+[Retention](#retention).
 
 Run it under systemd:
 
@@ -343,14 +358,19 @@ in the same Postgres, created idempotently by PostgresSaver.setup().
 
 ## Sources
 
-Seeded from `src/newspipe/seeding.py` (exactly the Phase 1 list). Verified live
-at build time; two deviations:
+Seeded from `src/newspipe/seeding.py` (the Phase 1 list, plus sources added
+since). Verified live at build time; two deviations:
 
 - **Anthropic Blog** publishes no public RSS feed — it is fetched from its
   XML sitemap (`sitemap` method), filtering `/news/` URLs.
 - **Google News RSS** item links are opaque redirect tokens that no longer
   embed the target URL (nor resolve via redirect) — the Google URL is kept as
   the item URL (spec fallback); cross-source dedup relies on title-hash in 1.2.
+
+Added post-Phase-1:
+
+- **AI/TLDR** (`https://ai-tldr.dev/feed.xml`) — Atom feed, fetched via the
+  `rss` method (feedparser handles both RSS and Atom).
 
 ## Configuration
 
@@ -368,7 +388,8 @@ Every setting lives in `.env` (see `.env.example` for the full list):
 | `LABEL_ORDER`       | `newest_per_source`                                   | Which unlabeled stories a run picks: `newest_per_source` (round-robin, fresh news first) or `oldest_first` (FIFO) |
 | `LABEL_CATEGORIES`  | `model_release,research,industry,funding,policy_regulation,tooling_infra,other` | Comma-separated category enum for labeling |
 | `IMPORTANCE_MIN` / `IMPORTANCE_MAX` | `1` / `10`                          | Importance scale bounds (inclusive) |
-| `SCHEDULER_CRON_MINUTE` / `SCHEDULER_CRON_HOUR` | `5` / `*`                | Pipeline run cadence (APScheduler cron fields) |
+| `SCHEDULER_CRON_MINUTE` / `SCHEDULER_CRON_HOUR` | `5` / `*`                | Hourly (incremental) pipeline run cadence (APScheduler cron fields) |
+| `DAILY_BACKFILL_CRON_HOUR` / `DAILY_BACKFILL_CRON_MINUTE` | `6` / `30`     | Once-daily 24h catch-up run cadence (APScheduler cron fields) |
 | `RETENTION_DAYS`    | *(unset — keep forever)*                             | Days to keep news before hard-deleting it |
 | `WEB_HOST` / `WEB_PORT` | `127.0.0.1` / `8010`                              | Web UI bind address (see [Web UI](#web-ui)) |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / *(unset — login refused)*      | Web UI login; login is disabled until `ADMIN_PASSWORD` is set |

@@ -65,9 +65,20 @@ class Settings(BaseSettings):
     importance_max: int = 10
 
     # Scheduler cadence (APScheduler CronTrigger fields, e.g. "*/15", "3,33").
-    # Defaults reproduce the original hourly-at-minute-5 schedule.
+    # Defaults reproduce the original hourly-at-minute-5 schedule. This is the
+    # incremental tick: every run fetches all due sources' current feed items
+    # and inserts only genuinely new ones (dedup on external_id/title-hash),
+    # so in effect it's "what's new since last check".
     scheduler_cron_minute: str = "5"
     scheduler_cron_hour: str = "*"
+
+    # Once-a-day job that forces a full 24h catch-up window instead of the
+    # incremental one (currently only changes behavior for the Hacker News
+    # fetcher — see fetchers/hn_algolia.py — whose query window is normally
+    # capped to "since last poll"). Acts as insurance against index/feed lag
+    # or a missed hourly tick; other sources just get an extra dedup'd fetch.
+    daily_backfill_cron_hour: str = "6"
+    daily_backfill_cron_minute: str = "30"
 
     # How long to keep news data. Unset (None) = keep forever. When set, a
     # daily job hard-deletes stories (and their arrivals/labels) that have had

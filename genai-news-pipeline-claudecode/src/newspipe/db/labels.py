@@ -44,6 +44,27 @@ def select_unlabeled_stories(
     return conn.execute(sql, tuple(params)).fetchall()
 
 
+def select_unlabeled_story_sources(conn) -> list[dict]:
+    """For every unlabeled story: its "primary" source and first_seen_at.
+
+    The primary source is whichever source's arrival for this story has the
+    earliest `fetched_at` — i.e. whichever source broke it first. Used to
+    fairly round-robin the labeling budget across sources instead of letting
+    one prolific source's stories dominate a run (see labeling/labeler.py).
+    """
+    return conn.execute(
+        """
+        SELECT DISTINCT ON (s.story_id)
+               s.story_id, a.source_id, s.first_seen_at
+          FROM stories s
+          JOIN arrivals a ON a.story_id = s.story_id
+          LEFT JOIN labels l ON l.story_id = s.story_id
+         WHERE l.label_id IS NULL
+         ORDER BY s.story_id, a.fetched_at ASC
+        """
+    ).fetchall()
+
+
 def insert_label(
     conn,
     story_id: int,

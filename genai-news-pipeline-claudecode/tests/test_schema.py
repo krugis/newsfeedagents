@@ -8,6 +8,7 @@ EXPECTED_TABLES = {
     "stories",
     "labels",
     "pipeline_runs",
+    "pipeline_state",
     "schema_migrations",
 }
 

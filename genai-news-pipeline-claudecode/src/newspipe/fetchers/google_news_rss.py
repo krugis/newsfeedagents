@@ -5,6 +5,11 @@ be decoded from the token we use it; otherwise the Google URL is kept as the
 item URL (the spec's fallback). As of 2026-08, Google's tokens are opaque and
 neither base64 decoding nor redirect-following yields the real article URL, so
 in practice the Google URL is used and cross-source dedup relies on title-hash.
+
+Google News always formats titles as "<article title> - <publisher>" (e.g.
+"... - The Japan Times"); we strip that suffix (see `_strip_source_suffix`)
+so a story that also arrived from its original source's own feed title-hash
+matches instead of permanently forking into two stories.
 """
 
 from __future__ import annotations
@@ -22,8 +27,14 @@ from newspipe.fetchers.base import RawItem, build_client, get_with_retry
 from newspipe.models.schemas import Source
 
 
-def fetch(source_row: Source, client: httpx.Client | None = None) -> list[RawItem]:
-    """Fetch a Google News RSS search feed and parse its items."""
+def fetch(
+    source_row: Source, client: httpx.Client | None = None, *, backfill: bool = False
+) -> list[RawItem]:
+    """Fetch a Google News RSS search feed and parse its items.
+
+    ``backfill`` is accepted for interface parity with the other fetchers but
+    unused here: a search feed has no time-window query to widen.
+    """
     client = client or build_client()
     feed_url = source_row.config["feed_url"]
     resp = get_with_retry(client, feed_url)
@@ -34,6 +45,7 @@ def fetch(source_row: Source, client: httpx.Client | None = None) -> list[RawIte
         title = str(entry.get("title", "")).strip() if entry.get("title") else ""
         if not google_url and not title:
             continue
+        title = _strip_source_suffix(title)
         target = extract_google_news_target(google_url)
         raw = rss.entry_to_raw(entry)
         raw["google_news_url"] = google_url
@@ -70,6 +82,18 @@ def extract_google_news_target(url: str) -> str | None:
     if inner:
         return inner.group(0).decode("utf-8", "ignore").strip()
     return None
+
+
+def _strip_source_suffix(title: str) -> str:
+    """Strip Google News's trailing " - <publisher>" suffix from a title.
+
+    Google News RSS always appends the publisher as the final " - "-separated
+    segment, so trimming after the *last* occurrence is safe even when the
+    article title itself contains a hyphenated clause earlier on.
+    """
+    if " - " not in title:
+        return title
+    return title.rsplit(" - ", 1)[0].strip()
 
 
 def _external_id_for(entry: Any, google_url: str) -> str:

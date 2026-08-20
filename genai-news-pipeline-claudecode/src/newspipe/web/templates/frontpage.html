@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}newspipe — Top GenAI/ML News{% endblock %}
+{% block content %}
+<header class="masthead">
+  <h1>newspipe</h1>
+  <p class="tagline">Top GenAI/ML News, curated hourly</p>
+  <div class="dateline">
+    {{ shown_day.strftime('%A, %B %-d, %Y') }}
+    {% if used_fallback %}
+    <span class="edition-note">— no stories yet today; showing the latest edition</span>
+    {% endif %}
+  </div>
+  <nav class="day-picker">
+    {% for day in selectable_days %}
+    <a class="day-pill{% if day == shown_day %} day-pill-active{% endif %}"
+       href="{{ url_for('frontpage.frontpage', day=day.isoformat()) }}">{{ day.strftime('%a %-d') }}</a>
+    {% endfor %}
+  </nav>
+</header>
+
+{% if not lead %}
+<p class="empty">No labeled stories yet. Check back after the next digest run.</p>
+{% else %}
+<article class="lead-story">
+  <div class="badges">
+    {% if lead.is_hot %}<span class="badge badge-hot">HOT</span>{% endif %}
+    <span class="badge badge-category">{{ lead.category }}</span>
+    <span class="badge badge-importance">Importance {{ lead.importance }}</span>
+  </div>
+  {% if lead.canonical_url %}
+  <h2 class="headline"><a href="{{ lead.canonical_url }}">{{ lead.title }}</a></h2>
+  {% else %}
+  <h2 class="headline">{{ lead.title }}</h2>
+  {% endif %}
+  {% if lead.rationale %}<p class="dek">{{ lead.rationale }}</p>{% endif %}
+  <p class="byline">
+    {{ lead.sources|join(', ') }}
+    {% if lead.arrival_count > 1 %}· {{ lead.arrival_count }} sources reporting{% endif %}
+  </p>
+</article>
+
+{% if rest %}
+<ul class="story-list">
+  {% for item in rest %}
+  <li class="story-item">
+    <div class="badges">
+      {% if item.is_hot %}<span class="badge badge-hot">HOT</span>{% endif %}
+      <span class="badge badge-category">{{ item.category }}</span>
+      <span class="badge badge-importance">{{ item.importance }}</span>
+    </div>
+    {% if item.canonical_url %}
+    <h3 class="headline"><a href="{{ item.canonical_url }}">{{ item.title }}</a></h3>
+    {% else %}
+    <h3 class="headline">{{ item.title }}</h3>
+    {% endif %}
+    {% if item.rationale %}<p class="dek">{{ item.rationale }}</p>{% endif %}
+    <p class="byline">{{ item.sources|join(', ') }}</p>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endif %}
+{% endblock %}

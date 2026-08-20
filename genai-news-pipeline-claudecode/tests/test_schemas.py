@@ -20,6 +20,11 @@ def test_source_method_must_be_known() -> None:
 
 
 def test_label_importance_bounds() -> None:
+    """The persisted-row model allows 1..100 — a ceiling covering any
+
+    configured importance scale (Settings.importance_min/max); the exact
+    configured bounds are enforced at the LLM structured-output boundary.
+    """
     base = {
         "label_id": 1,
         "story_id": 1,
@@ -28,14 +33,19 @@ def test_label_importance_bounds() -> None:
         "labeled_at": _now(),
     }
     Label(importance=1, **base)
-    Label(importance=10, **base)
+    Label(importance=100, **base)
     with pytest.raises(ValidationError):
         Label(importance=0, **base)
     with pytest.raises(ValidationError):
-        Label(importance=11, **base)
+        Label(importance=101, **base)
 
 
-def test_label_category_is_literal() -> None:
+def test_label_category_accepts_any_string() -> None:
+    """`Label.category` is a plain str — the category enum is configurable
+
+    (Settings.label_categories) and enforced at the LLM structured-output
+    boundary (labeling/schema.py), not on this persisted-row model.
+    """
     base = {
         "label_id": 1,
         "story_id": 1,
@@ -43,5 +53,4 @@ def test_label_category_is_literal() -> None:
         "importance": 5,
         "labeled_at": _now(),
     }
-    with pytest.raises(ValidationError):
-        Label(category="not_a_category", **base)
+    assert Label(category="any_configured_category", **base).category == "any_configured_category"

@@ -30,3 +30,7 @@ class PipelineState(TypedDict, total=False):
     # never written back into the parent state
     source_id: int
     started_at: datetime | None
+    # True for the once-daily backfill run: fetchers that support a query
+    # window (currently only hn_algolia) use a full 24h window instead of
+    # "since last poll".
+    backfill: bool

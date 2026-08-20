@@ -19,14 +19,21 @@ from newspipe.models.schemas import Source
 MAX_WINDOW = timedelta(hours=24)
 
 
-def fetch(source_row: Source, client: httpx.Client | None = None) -> list[RawItem]:
-    """Fetch HN items matching the configured keywords since the poll window."""
+def fetch(
+    source_row: Source, client: httpx.Client | None = None, *, backfill: bool = False
+) -> list[RawItem]:
+    """Fetch HN items matching the configured keywords since the poll window.
+
+    ``backfill=True`` (the once-daily job) forces the full 24h window instead
+    of "since last poll" — insurance against Algolia indexing lag or a missed
+    hourly tick.
+    """
     client = client or build_client()
     base_url = source_row.config.get("base_url", "https://hn.algolia.com/api/v1/")
     keywords = source_row.config.get("keywords", ["AI", "LLM", "generative AI"])
     hits_per_page = source_row.config.get("hits_per_page", 100)
 
-    since = _window_start(source_row)
+    since = datetime.now(UTC) - MAX_WINDOW if backfill else _window_start(source_row)
     front_page_ids = _fetch_front_page_ids(client, base_url)
 
     by_id: dict[str, RawItem] = {}

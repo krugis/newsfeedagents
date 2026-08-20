@@ -1,0 +1,37 @@
+# newspipe — admin/news web UI
+#
+# Install (NOT done automatically — same gate discipline as newspipe.service):
+#   sudo cp deploy/newspipe-web.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl start newspipe-web        # start now
+#   sudo systemctl enable newspipe-web       # start on boot
+#
+# The project is currently owned by root on this server. If you run under a
+# non-root account, change User= to that account and `chown -R` the project.
+# Set ADMIN_PASSWORD in .env before starting — login is refused until it is.
+#
+# Runs under gunicorn (not `python -m newspipe web`'s Flask dev server) since
+# this process is reverse-proxied from the public internet (nginx vhost for
+# news.agate.tr, port 8010) — Flask's dev server isn't meant for that.
+# Bind host/port here must match WEB_HOST/WEB_PORT in .env and the nginx
+# vhost's proxy_pass if you change them from the defaults (127.0.0.1:8010).
+# -w 1 is deliberate, not a tuning oversight: web/actions.py's fetch/dedup/
+# label busy-lock is an in-process threading.Lock, so it only prevents
+# concurrent runs if there's exactly one worker process.
+
+[Unit]
+Description=newspipe — admin/news web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/agate/newsfeedagents/genai-news-pipeline-claudecode
+EnvironmentFile=/home/agate/newsfeedagents/genai-news-pipeline-claudecode/.env
+ExecStart=/home/agate/newsfeedagents/genai-news-pipeline-claudecode/.venv/bin/gunicorn -w 1 -b 127.0.0.1:8010 newspipe.web.app:create_app()
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

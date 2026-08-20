@@ -151,6 +151,27 @@ def test_google_news_keeps_opaque_url_and_records_source(monkeypatch):
         assert item.title
 
 
+def test_google_news_strips_publisher_suffix_from_titles(monkeypatch):
+    _stub_get_with_retry(monkeypatch, google_news_rss, {"news.google.com": "google_news_genai.xml"})
+    src = _source(
+        "google_news_rss", {"feed_url": "https://news.google.com/rss/search?q=generative+AI"}
+    )
+    items = google_news_rss.fetch(src)
+    titles = [item.title for item in items]
+    assert "Generative AI aiding quake relief in Kumamoto" in titles
+    assert not any(title.endswith(" - The Japan Times") for title in titles)
+
+
+def test_strip_source_suffix_keeps_hyphenated_clause_in_title():
+    # Only the last " - " segment (the publisher) is stripped.
+    title = "Generative AI has changed mathematics forever. Where to from here? - The Conversation"
+    assert (
+        google_news_rss._strip_source_suffix(title)
+        == "Generative AI has changed mathematics forever. Where to from here?"
+    )
+    assert google_news_rss._strip_source_suffix("No suffix here") == "No suffix here"
+
+
 def test_extract_google_news_target_decodes_old_format():
     payload = b"\x08\x01\x12\x20https://example.com/article/123\x00"
     token = base64.urlsafe_b64encode(payload).decode().rstrip("=")

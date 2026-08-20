@@ -32,6 +32,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub.add_parser("status", help="show last runs, unlabeled backlog, source health, errors")
     sub.add_parser("scheduler", help="run the hourly scheduler (foreground or via systemd)")
+    retention_parser = sub.add_parser(
+        "retention",
+        help="purge news past the retention window (no-op unless RETENTION_DAYS is set)",
+    )
+    retention_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report what would be deleted without deleting it",
+    )
+    sub.add_parser("web", help="run the admin/news web UI (login + config + fetch/dedup/label)")
 
     args = parser.parse_args(argv)
 
@@ -59,6 +69,17 @@ def main(argv: list[str] | None = None) -> int:
         from newspipe import scheduler
 
         return scheduler.main()
+    if args.command == "retention":
+        from newspipe import retention
+
+        return retention.main(dry_run=args.dry_run)
+    if args.command == "web":
+        from newspipe.config import get_settings
+        from newspipe.web.app import create_app
+
+        settings = get_settings()
+        create_app().run(host=settings.web_host, port=settings.web_port)
+        return 0
 
     parser.error(f"unknown command: {args.command!r}")
     return 2  # pragma: no cover

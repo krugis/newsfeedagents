@@ -12,18 +12,101 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from collections import deque
 from dataclasses import dataclass, field
 
+import httpx
 from langchain_openai import ChatOpenAI
+from pydantic import BaseModel
 
-from newspipe.config import get_settings
+from newspipe.config import Settings, get_settings
 from newspipe.db.engine import connect
-from newspipe.db.labels import insert_label, select_unlabeled_stories
-from newspipe.labeling.schema import HeadlineLabel
+from newspipe.db.labels import (
+    insert_label,
+    select_unlabeled_stories,
+    select_unlabeled_story_sources,
+)
+from newspipe.labeling.schema import build_headline_label_model
 
 logger = logging.getLogger(__name__)
 
 PROMPT_VERSION = "p1"
+
+_REACHABILITY_PROBE_TIMEOUT = httpx.Timeout(5.0)
+
+
+@dataclass(frozen=True)
+class ProviderConfig:
+    """One labeler backend's resolved credentials/model, ready to build a client."""
+
+    name: str
+    api_key: str | None
+    base_url: str
+    model_name: str
+    extra_body: dict | None = None
+
+
+def provider_config(settings: Settings, name: str) -> ProviderConfig:
+    """Build a `ProviderConfig` for a named provider ("local"/"glm"/"deepseek")."""
+    if name == "local":
+        return ProviderConfig(
+            "local",
+            settings.local_llm_api_key,
+            settings.local_llm_base_url,
+            settings.local_model_name,
+        )
+    if name == "glm":
+        return ProviderConfig(
+            "glm",
+            settings.glm_llm_api_key,
+            settings.glm_llm_base_url,
+            settings.glm_model_name,
+            # GLM defaults to an extended "thinking" pass that's ~10x slower
+            # with no labeling-quality benefit for a one-sentence-rationale
+            # task (measured: ~29s -> ~2s/call with it off, same output shape).
+            extra_body={"thinking": {"type": "disabled"}},
+        )
+    if name == "deepseek":
+        return ProviderConfig(
+            "deepseek", settings.llm_api_key, settings.llm_base_url, settings.model_name
+        )
+    raise ValueError(f"unknown labeler provider: {name!r}")
+
+
+def _provider_reachable(base_url: str) -> bool:
+    """Best-effort, single-attempt reachability probe (no retries — this must
+    stay fast so an unreachable primary fails over quickly).
+
+    Any HTTP response — even a 4xx/5xx — counts as reachable: it proves the
+    network path and TLS handshake work, which is what a down box/network
+    partition would break. Only a transport-level failure (refused, DNS,
+    timeout) counts as unreachable.
+    """
+    try:
+        httpx.get(base_url, timeout=_REACHABILITY_PROBE_TIMEOUT)
+    except httpx.TransportError:
+        return False
+    return True
+
+
+def resolve_labeler_provider(settings: Settings) -> ProviderConfig:
+    """Pick which provider this run actually uses: the configured primary, or
+    its configured fallback if the primary has no key or isn't reachable.
+    """
+    primary = provider_config(settings, settings.labeler_provider)
+    if primary.api_key and _provider_reachable(primary.base_url):
+        return primary
+    fallback_name = settings.labeler_fallback_provider
+    if fallback_name not in ("none", primary.name):
+        fallback = provider_config(settings, fallback_name)
+        if fallback.api_key:
+            logger.warning(
+                "labeler_provider_fallback",
+                extra={"extra_primary": primary.name, "extra_fallback": fallback.name},
+            )
+            return fallback
+    return primary  # no viable fallback — let the caller's missing-key error explain why
+
 
 _PROMPT_TEMPLATE = """You label a single GenAI/ML news headline for a daily digest.
 
@@ -38,10 +121,11 @@ for. The schema's fields mean:
 - is_hot: True only for a major/breaking GenAI/ML event (a model release, a
   significant research result, a major policy decision, a large funding
   round). Routine coverage, speculation, and incremental updates are not hot.
-- importance: an integer 1..10. Cross-source arrival is an explicit importance
-  signal: a headline carried by several independent sources, or that reached
-  the Hacker News front page (HN_FRONT_PAGE true), is more likely important
-  than a single-feed mention. Weigh that signal without inflating it blindly.
+- importance: an integer {importance_min}..{importance_max}. Cross-source
+  arrival is an explicit importance signal: a headline carried by several
+  independent sources, or that reached the Hacker News front page
+  (HN_FRONT_PAGE true), is more likely important than a single-feed mention.
+  Weigh that signal without inflating it blindly.
 - category: the single best fit.
 - is_genai_ml_relevant: False if the headline is NOT about GenAI/ML — generic
   tech/software news or non-AI topics that broad feeds carry. We use this to
@@ -62,36 +146,56 @@ class LabelStats:
     labeled_story_ids: list[int] = field(default_factory=list)
 
 
-def build_labeler():
-    """A structured-output chat model for labeling, with transient retries."""
+def build_labeler(provider: ProviderConfig | None = None):
+    """A structured-output chat model for labeling, with transient retries.
+
+    Defaults to whichever provider `resolve_labeler_provider` picks for the
+    current settings (primary, or its fallback) — pass one explicitly to
+    target a specific backend (used by tests and the admin "test labeler"
+    action).
+    """
     settings = get_settings()
-    if not settings.deepseek_api_key:
-        raise RuntimeError("DEEPSEEK_API_KEY is not set — set it in .env to label")
-    # DeepSeek's OpenAI-compatible API does not support json_schema response
-    # format, so force function_calling: the schema is carried as a tool the
-    # model must call, which enforces field conformance better than json_mode.
+    provider = provider or resolve_labeler_provider(settings)
+    if not provider.api_key:
+        raise RuntimeError(
+            f"No API key configured for labeler provider '{provider.name}' "
+            "(and no usable fallback) — set one in .env"
+        )
+    schema = build_headline_label_model(
+        tuple(settings.label_categories), settings.importance_min, settings.importance_max
+    )
+    # Most providers here don't support json_schema response format, so force
+    # function_calling: the schema is carried as a tool the model must call,
+    # which enforces field conformance better than json_mode.
+    kwargs = {"extra_body": provider.extra_body} if provider.extra_body else {}
     model = ChatOpenAI(
-        model=settings.model_name,
-        api_key=settings.deepseek_api_key,
-        base_url=settings.deepseek_base_url,
-    ).with_structured_output(HeadlineLabel, method="function_calling")
+        model=provider.model_name,
+        api_key=provider.api_key,
+        base_url=provider.base_url,
+        **kwargs,
+    ).with_structured_output(schema, method="function_calling")
     return model.with_retry()
 
 
 def build_prompt(story: dict) -> str:
     """Render the versioned prompt for one story (see PROMPT_VERSION)."""
+    settings = get_settings()
     return _PROMPT_TEMPLATE.format(
         title=story["title"],
         sources=", ".join(story["sources"]),
         arrival_count=story["arrival_count"],
         hn_front_page="true" if story["hn_front_page"] else "false",
+        importance_min=settings.importance_min,
+        importance_max=settings.importance_max,
     )
 
 
-async def _batch_label(stories: list[dict]) -> list[HeadlineLabel | Exception]:
-    """Run the model over `stories`, one HeadlineLabel per story (or its exception)."""
+async def _batch_label(
+    stories: list[dict], provider: ProviderConfig
+) -> list[BaseModel | Exception]:
+    """Run the model over `stories`; one labeled result per story (or its exception)."""
     settings = get_settings()
-    labeler = build_labeler()
+    labeler = build_labeler(provider)
     prompts = [build_prompt(story) for story in stories]
     return await labeler.abatch(
         prompts,
@@ -100,21 +204,65 @@ async def _batch_label(stories: list[dict]) -> list[HeadlineLabel | Exception]:
     )
 
 
+def _round_robin_select(rows: list[dict], limit: int) -> list[int]:
+    """Fairly interleave unlabeled stories across sources, newest first.
+
+    `rows` are {"story_id", "source_id", "first_seen_at"}, one per unlabeled
+    story (see `select_unlabeled_story_sources`). Returns up to `limit`
+    story_ids, round-robining across sources one story per round — so no
+    single source can fill the whole budget — newest within each source
+    first. A source with fewer stories than its "fair share" simply runs dry
+    early, and its unused rounds go to the other sources automatically.
+    """
+    by_source: dict[int, deque[int]] = {}
+    for row in sorted(rows, key=lambda r: r["first_seen_at"], reverse=True):
+        by_source.setdefault(row["source_id"], deque()).append(row["story_id"])
+
+    queues = [by_source[source_id] for source_id in sorted(by_source)]
+    selected: list[int] = []
+    while queues and len(selected) < limit:
+        for queue in list(queues):
+            if len(selected) == limit:
+                break
+            selected.append(queue.popleft())
+            if not queue:
+                queues.remove(queue)
+    return selected
+
+
+def _select_for_labeling(conn, limit: int | None, story_ids: list[int] | None) -> list[dict]:
+    """Pick which unlabeled stories to label this run."""
+    if story_ids is not None:
+        return select_unlabeled_stories(conn, story_ids=story_ids)
+    settings = get_settings()
+    if limit is not None and settings.label_order == "newest_per_source":
+        candidates = select_unlabeled_story_sources(conn)
+        selected_ids = _round_robin_select(candidates, limit)
+        return select_unlabeled_stories(conn, story_ids=selected_ids) if selected_ids else []
+    return select_unlabeled_stories(conn, limit=limit)
+
+
 def label_unlabeled(limit: int | None = None, story_ids: list[int] | None = None) -> LabelStats:
     """Label unlabeled stories and persist one `labels` row each.
 
-    Failures are counted and left unlabeled so a later run retries them; a
-    failed story never blocks the rest of the batch.
+    Which stories are picked is governed by `Settings.label_order` (see
+    `_select_for_labeling`); explicit `story_ids` always wins (used by tests
+    and targeted relabeling). Failures are counted and left unlabeled so a
+    later run retries them; a failed story never blocks the rest of the batch.
     """
     settings = get_settings()
-    if not settings.deepseek_api_key:
-        raise RuntimeError("DEEPSEEK_API_KEY is not set — set it in .env to label")
+    provider = resolve_labeler_provider(settings)
+    if not provider.api_key:
+        raise RuntimeError(
+            f"No API key configured for labeler provider '{provider.name}' "
+            "(and no usable fallback) — set one in .env"
+        )
     with connect() as conn:
-        stories = select_unlabeled_stories(conn, limit=limit, story_ids=story_ids)
+        stories = _select_for_labeling(conn, limit, story_ids)
         stats = LabelStats(stories_attempted=len(stories))
         if not stories:
             return stats
-        outcomes = asyncio.run(_batch_label(stories))
+        outcomes = asyncio.run(_batch_label(stories, provider))
         for story, outcome in zip(stories, outcomes, strict=True):
             if isinstance(outcome, Exception):
                 stats.failed += 1
@@ -128,7 +276,7 @@ def label_unlabeled(limit: int | None = None, story_ids: list[int] | None = None
                 category=outcome.category,
                 is_genai_ml_relevant=outcome.is_genai_ml_relevant,
                 rationale=outcome.rationale,
-                model=settings.model_name,
+                model=provider.model_name,
                 prompt_version=PROMPT_VERSION,
             )
             stats.labels_created += 1
@@ -150,7 +298,7 @@ def main(limit: int | None = None) -> int:
     limit = limit if limit is not None else settings.label_limit_per_run
     try:
         stats = label_unlabeled(limit=limit)
-    except RuntimeError as exc:  # e.g. missing ANTHROPIC_API_KEY — a config error
+    except RuntimeError as exc:  # e.g. missing LLM_API_KEY — a config error
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(f"stories attempted: {stats.stories_attempted}")

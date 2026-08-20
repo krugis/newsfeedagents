@@ -19,8 +19,14 @@ from newspipe.models.schemas import Source
 _SITEMAP_NS = "http://www.sitemaps.org/schemas/sitemap/0.9"
 
 
-def fetch(source_row: Source, client: httpx.Client | None = None) -> list[RawItem]:
-    """Return sitemap URLs matching ``config["path_filter"]`` as RawItems."""
+def fetch(
+    source_row: Source, client: httpx.Client | None = None, *, backfill: bool = False
+) -> list[RawItem]:
+    """Return sitemap URLs matching ``config["path_filter"]`` as RawItems.
+
+    ``backfill`` is accepted for interface parity with the other fetchers but
+    unused here: a sitemap has no time-window query to widen.
+    """
     client = client or build_client()
     sitemap_url = source_row.config["sitemap_url"]
     path_filter = source_row.config.get("path_filter")

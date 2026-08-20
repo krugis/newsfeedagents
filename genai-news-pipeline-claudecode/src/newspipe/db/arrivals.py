@@ -51,3 +51,22 @@ def insert_arrivals(
 ) -> int:
     """Insert items as arrivals; returns the number of newly inserted rows."""
     return len(insert_arrivals_returning(conn, source_id, items))
+
+
+def select_arrivals_page(conn: psycopg.Connection, limit: int, offset: int) -> list[dict]:
+    """One page of arrivals, newest first, joined to their source name."""
+    return conn.execute(
+        """
+        SELECT a.fetched_at, s.name AS source, a.title
+          FROM arrivals a
+          JOIN sources s ON s.source_id = a.source_id
+         ORDER BY a.fetched_at DESC, a.arrival_id DESC
+         LIMIT %s OFFSET %s
+        """,
+        (limit, offset),
+    ).fetchall()
+
+
+def count_arrivals(conn: psycopg.Connection) -> int:
+    """Total number of arrivals (for pagination)."""
+    return conn.execute("SELECT count(*) AS n FROM arrivals").fetchone()["n"]

@@ -60,6 +60,11 @@ SOURCES: list[dict] = [
             "feed_url": "https://news.google.com/rss/search?q=large%20language%20model&hl=en-US&gl=US&ceid=US:en",
         },
     },
+    {
+        "name": "AI/TLDR",
+        "method": "rss",
+        "config": {"feed_url": "https://ai-tldr.dev/feed.xml"},
+    },
 ]
 
 

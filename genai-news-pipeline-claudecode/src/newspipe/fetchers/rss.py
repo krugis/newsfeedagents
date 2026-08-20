@@ -13,8 +13,15 @@ from newspipe.fetchers.base import RawItem, build_client, get_with_retry
 from newspipe.models.schemas import Source
 
 
-def fetch(source_row: Source, client: httpx.Client | None = None) -> list[RawItem]:
-    """Fetch and parse the feed configured in ``source_row.config["feed_url"]``."""
+def fetch(
+    source_row: Source, client: httpx.Client | None = None, *, backfill: bool = False
+) -> list[RawItem]:
+    """Fetch and parse the feed configured in ``source_row.config["feed_url"]``.
+
+    ``backfill`` is accepted for interface parity with the other fetchers but
+    unused here: a plain feed poll always returns whatever's currently
+    published, with no time-window query to widen.
+    """
     client = client or build_client()
     feed_url = source_row.config["feed_url"]
     resp = get_with_retry(client, feed_url)

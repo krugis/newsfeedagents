@@ -18,19 +18,31 @@ from newspipe.dedup import run_dedup
 from newspipe.fetchers.base import RawItem
 from newspipe.labeling.labeler import (
     PROMPT_VERSION,
+    ProviderConfig,
+    _provider_reachable,
     _round_robin_select,
     _select_for_labeling,
     build_prompt,
     label_unlabeled,
+    provider_config,
+    resolve_labeler_provider,
 )
 from newspipe.labeling.schema import HeadlineLabel, build_headline_label_model
 
 
 @pytest.fixture
 def fake_api_key(monkeypatch):
-    """Let labeler code pass the API-key guard without hitting the network."""
-    patched = Settings(llm_api_key="test-key")
+    """Let labeler code pass the API-key guard without hitting the network.
+
+    Pins the provider to "deepseek" (with fallback off) so tests don't
+    depend on labeler_provider's real default or trigger a reachability
+    probe against the local/glm endpoints.
+    """
+    patched = Settings(
+        llm_api_key="test-key", labeler_provider="deepseek", labeler_fallback_provider="none"
+    )
     monkeypatch.setattr("newspipe.labeling.labeler.get_settings", lambda: patched)
+    return patched
 
 
 def _make_story(db_conn, source_scope, name: str, items: list[RawItem]) -> list[int]:
@@ -160,6 +172,109 @@ def test_build_prompt_includes_cross_source_signal():
     assert "HN_FRONT_PAGE: true" in prompt
 
 
+# ---- provider selection (local/glm/deepseek, fallback) -------------------
+
+
+def test_provider_config_local():
+    settings = Settings(
+        local_llm_api_key="k", local_llm_base_url="https://local.example", local_model_name="m"
+    )
+    cfg = provider_config(settings, "local")
+    assert cfg == ProviderConfig("local", "k", "https://local.example", "m")
+
+
+def test_provider_config_deepseek():
+    settings = Settings(
+        llm_api_key="k", llm_base_url="https://ds.example", model_name="deepseek-chat"
+    )
+    cfg = provider_config(settings, "deepseek")
+    assert cfg == ProviderConfig("deepseek", "k", "https://ds.example", "deepseek-chat")
+
+
+def test_provider_config_glm_disables_thinking_by_default():
+    settings = Settings(glm_llm_api_key="k")
+    cfg = provider_config(settings, "glm")
+    assert cfg.extra_body == {"thinking": {"type": "disabled"}}
+
+
+def test_provider_config_rejects_unknown_name():
+    with pytest.raises(ValueError, match="unknown labeler provider"):
+        provider_config(Settings(), "bogus")
+
+
+def test_resolve_uses_primary_when_reachable(monkeypatch):
+    monkeypatch.setattr("newspipe.labeling.labeler._provider_reachable", lambda url: True)
+    settings = Settings(labeler_provider="local", local_llm_api_key="k")
+    assert resolve_labeler_provider(settings).name == "local"
+
+
+def test_resolve_falls_back_when_primary_key_missing(monkeypatch):
+    # local has no key at all — must fall back without even probing reachability.
+    def unexpected(url):
+        raise AssertionError("should not probe reachability when the key is unset")
+
+    monkeypatch.setattr("newspipe.labeling.labeler._provider_reachable", unexpected)
+    settings = Settings(
+        labeler_provider="local",
+        local_llm_api_key=None,
+        labeler_fallback_provider="glm",
+        glm_llm_api_key="gk",
+    )
+    provider = resolve_labeler_provider(settings)
+    assert provider.name == "glm"
+    assert provider.api_key == "gk"
+
+
+def test_resolve_falls_back_when_primary_unreachable(monkeypatch):
+    monkeypatch.setattr("newspipe.labeling.labeler._provider_reachable", lambda url: False)
+    settings = Settings(
+        labeler_provider="local",
+        local_llm_api_key="k",
+        labeler_fallback_provider="glm",
+        glm_llm_api_key="gk",
+    )
+    assert resolve_labeler_provider(settings).name == "glm"
+
+
+def test_resolve_stays_on_primary_when_fallback_is_none(monkeypatch):
+    monkeypatch.setattr("newspipe.labeling.labeler._provider_reachable", lambda url: False)
+    settings = Settings(
+        labeler_provider="local", local_llm_api_key="k", labeler_fallback_provider="none"
+    )
+    provider = resolve_labeler_provider(settings)
+    assert provider.name == "local"  # unreachable, but no fallback configured
+
+
+def test_resolve_stays_on_primary_when_fallback_also_has_no_key(monkeypatch):
+    monkeypatch.setattr("newspipe.labeling.labeler._provider_reachable", lambda url: False)
+    settings = Settings(
+        labeler_provider="local",
+        local_llm_api_key="k",
+        labeler_fallback_provider="glm",
+        glm_llm_api_key=None,
+    )
+    provider = resolve_labeler_provider(settings)
+    assert provider.name == "local"  # fallback has no key either, so stick with primary
+
+
+def test_provider_reachable_false_on_connection_error(monkeypatch):
+    import httpx
+
+    def fake_get(url, timeout):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr("newspipe.labeling.labeler.httpx.get", fake_get)
+    assert _provider_reachable("https://unreachable.example") is False
+
+
+def test_provider_reachable_true_on_any_http_response(monkeypatch):
+    def fake_get(url, timeout):
+        return object()  # any response object, including error statuses, counts as reachable
+
+    monkeypatch.setattr("newspipe.labeling.labeler.httpx.get", fake_get)
+    assert _provider_reachable("https://example.com") is True
+
+
 # ---- persistence layer -------------------------------------------------
 
 
@@ -258,7 +373,7 @@ def test_label_unlabeled_persists_labels(db_conn, source_scope, fake_api_key, mo
         [RawItem(external_id="zz-l1", url="https://example.com/l1", title="Label Test Story One")],
     )
 
-    async def fake_batch(stories):  # noqa: ARG001
+    async def fake_batch(stories, provider):  # noqa: ARG001
         return [_label()]
 
     monkeypatch.setattr("newspipe.labeling.labeler._batch_label", fake_batch)
@@ -287,7 +402,7 @@ def test_label_unlabeled_persists_labels(db_conn, source_scope, fake_api_key, mo
     assert row["importance"] == 7
     assert row["category"] == "model_release"
     assert row["prompt_version"] == PROMPT_VERSION
-    assert row["model"] == get_settings().model_name
+    assert row["model"] == fake_api_key.model_name
 
 
 def test_label_failure_leaves_story_unlabeled(db_conn, source_scope, fake_api_key, monkeypatch):
@@ -301,7 +416,7 @@ def test_label_failure_leaves_story_unlabeled(db_conn, source_scope, fake_api_ke
         ],
     )
 
-    async def fake_batch(stories):
+    async def fake_batch(stories, provider):
         return [_label(), RuntimeError("boom")]
 
     monkeypatch.setattr("newspipe.labeling.labeler._batch_label", fake_batch)
@@ -311,7 +426,7 @@ def test_label_failure_leaves_story_unlabeled(db_conn, source_scope, fake_api_ke
     assert stats.failed == 1
 
     # the failed story stays unlabeled and is retried on the next run
-    async def fake_batch_ok(stories):
+    async def fake_batch_ok(stories, provider):
         return [_label(importance=3, category="research") for _ in stories]
 
     monkeypatch.setattr("newspipe.labeling.labeler._batch_label", fake_batch_ok)
@@ -333,7 +448,7 @@ def test_label_unlabeled_story_ids_filter(db_conn, source_scope, fake_api_key, m
         ],
     )
 
-    async def fake_batch(stories):
+    async def fake_batch(stories, provider):
         return [_label() for _ in stories]
 
     monkeypatch.setattr("newspipe.labeling.labeler._batch_label", fake_batch)
@@ -348,9 +463,11 @@ def test_label_unlabeled_story_ids_filter(db_conn, source_scope, fake_api_key, m
 
 
 def test_label_unlabeled_requires_api_key(monkeypatch):
-    patched = Settings(llm_api_key=None)
+    patched = Settings(
+        labeler_provider="local", labeler_fallback_provider="none", local_llm_api_key=None
+    )
     monkeypatch.setattr("newspipe.labeling.labeler.get_settings", lambda: patched)
-    with pytest.raises(RuntimeError, match="LLM_API_KEY"):
+    with pytest.raises(RuntimeError, match="No API key configured"):
         label_unlabeled()
 
 
@@ -359,8 +476,8 @@ def test_label_unlabeled_requires_api_key(monkeypatch):
 
 @pytest.mark.live
 def test_label_three_stories_live(db_conn, source_scope):
-    if not get_settings().llm_api_key:
-        pytest.skip("LLM_API_KEY not set — set it in .env to run live labeling")
+    if not resolve_labeler_provider(get_settings()).api_key:
+        pytest.skip("no labeler provider has an API key set — set one in .env to run live labeling")
     story_ids = _make_story(
         db_conn,
         source_scope,

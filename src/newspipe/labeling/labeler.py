@@ -15,10 +15,11 @@ import sys
 from collections import deque
 from dataclasses import dataclass, field
 
+import httpx
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
-from newspipe.config import get_settings
+from newspipe.config import Settings, get_settings
 from newspipe.db.engine import connect
 from newspipe.db.labels import (
     insert_label,
@@ -30,6 +31,82 @@ from newspipe.labeling.schema import build_headline_label_model
 logger = logging.getLogger(__name__)
 
 PROMPT_VERSION = "p1"
+
+_REACHABILITY_PROBE_TIMEOUT = httpx.Timeout(5.0)
+
+
+@dataclass(frozen=True)
+class ProviderConfig:
+    """One labeler backend's resolved credentials/model, ready to build a client."""
+
+    name: str
+    api_key: str | None
+    base_url: str
+    model_name: str
+    extra_body: dict | None = None
+
+
+def provider_config(settings: Settings, name: str) -> ProviderConfig:
+    """Build a `ProviderConfig` for a named provider ("local"/"glm"/"deepseek")."""
+    if name == "local":
+        return ProviderConfig(
+            "local",
+            settings.local_llm_api_key,
+            settings.local_llm_base_url,
+            settings.local_model_name,
+        )
+    if name == "glm":
+        return ProviderConfig(
+            "glm",
+            settings.glm_llm_api_key,
+            settings.glm_llm_base_url,
+            settings.glm_model_name,
+            # GLM defaults to an extended "thinking" pass that's ~10x slower
+            # with no labeling-quality benefit for a one-sentence-rationale
+            # task (measured: ~29s -> ~2s/call with it off, same output shape).
+            extra_body={"thinking": {"type": "disabled"}},
+        )
+    if name == "deepseek":
+        return ProviderConfig(
+            "deepseek", settings.llm_api_key, settings.llm_base_url, settings.model_name
+        )
+    raise ValueError(f"unknown labeler provider: {name!r}")
+
+
+def _provider_reachable(base_url: str) -> bool:
+    """Best-effort, single-attempt reachability probe (no retries — this must
+    stay fast so an unreachable primary fails over quickly).
+
+    Any HTTP response — even a 4xx/5xx — counts as reachable: it proves the
+    network path and TLS handshake work, which is what a down box/network
+    partition would break. Only a transport-level failure (refused, DNS,
+    timeout) counts as unreachable.
+    """
+    try:
+        httpx.get(base_url, timeout=_REACHABILITY_PROBE_TIMEOUT)
+    except httpx.TransportError:
+        return False
+    return True
+
+
+def resolve_labeler_provider(settings: Settings) -> ProviderConfig:
+    """Pick which provider this run actually uses: the configured primary, or
+    its configured fallback if the primary has no key or isn't reachable.
+    """
+    primary = provider_config(settings, settings.labeler_provider)
+    if primary.api_key and _provider_reachable(primary.base_url):
+        return primary
+    fallback_name = settings.labeler_fallback_provider
+    if fallback_name not in ("none", primary.name):
+        fallback = provider_config(settings, fallback_name)
+        if fallback.api_key:
+            logger.warning(
+                "labeler_provider_fallback",
+                extra={"extra_primary": primary.name, "extra_fallback": fallback.name},
+            )
+            return fallback
+    return primary  # no viable fallback — let the caller's missing-key error explain why
+
 
 _PROMPT_TEMPLATE = """You label a single GenAI/ML news headline for a daily digest.
 
@@ -69,22 +146,33 @@ class LabelStats:
     labeled_story_ids: list[int] = field(default_factory=list)
 
 
-def build_labeler():
-    """A structured-output chat model for labeling, with transient retries."""
+def build_labeler(provider: ProviderConfig | None = None):
+    """A structured-output chat model for labeling, with transient retries.
+
+    Defaults to whichever provider `resolve_labeler_provider` picks for the
+    current settings (primary, or its fallback) — pass one explicitly to
+    target a specific backend (used by tests and the admin "test labeler"
+    action).
+    """
     settings = get_settings()
-    if not settings.llm_api_key:
-        raise RuntimeError("LLM_API_KEY is not set — set it in .env to label")
+    provider = provider or resolve_labeler_provider(settings)
+    if not provider.api_key:
+        raise RuntimeError(
+            f"No API key configured for labeler provider '{provider.name}' "
+            "(and no usable fallback) — set one in .env"
+        )
     schema = build_headline_label_model(
         tuple(settings.label_categories), settings.importance_min, settings.importance_max
     )
-    # DeepSeek's OpenAI-compatible API does not support json_schema response
-    # format, so force function_calling: the schema is carried as a tool the
-    # model must call, which enforces field conformance better than json_mode.
-    # (Most OpenAI-compatible endpoints accept function_calling too.)
+    # Most providers here don't support json_schema response format, so force
+    # function_calling: the schema is carried as a tool the model must call,
+    # which enforces field conformance better than json_mode.
+    kwargs = {"extra_body": provider.extra_body} if provider.extra_body else {}
     model = ChatOpenAI(
-        model=settings.model_name,
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url,
+        model=provider.model_name,
+        api_key=provider.api_key,
+        base_url=provider.base_url,
+        **kwargs,
     ).with_structured_output(schema, method="function_calling")
     return model.with_retry()
 
@@ -102,10 +190,12 @@ def build_prompt(story: dict) -> str:
     )
 
 
-async def _batch_label(stories: list[dict]) -> list[BaseModel | Exception]:
+async def _batch_label(
+    stories: list[dict], provider: ProviderConfig
+) -> list[BaseModel | Exception]:
     """Run the model over `stories`; one labeled result per story (or its exception)."""
     settings = get_settings()
-    labeler = build_labeler()
+    labeler = build_labeler(provider)
     prompts = [build_prompt(story) for story in stories]
     return await labeler.abatch(
         prompts,
@@ -161,14 +251,18 @@ def label_unlabeled(limit: int | None = None, story_ids: list[int] | None = None
     later run retries them; a failed story never blocks the rest of the batch.
     """
     settings = get_settings()
-    if not settings.llm_api_key:
-        raise RuntimeError("LLM_API_KEY is not set — set it in .env to label")
+    provider = resolve_labeler_provider(settings)
+    if not provider.api_key:
+        raise RuntimeError(
+            f"No API key configured for labeler provider '{provider.name}' "
+            "(and no usable fallback) — set one in .env"
+        )
     with connect() as conn:
         stories = _select_for_labeling(conn, limit, story_ids)
         stats = LabelStats(stories_attempted=len(stories))
         if not stories:
             return stats
-        outcomes = asyncio.run(_batch_label(stories))
+        outcomes = asyncio.run(_batch_label(stories, provider))
         for story, outcome in zip(stories, outcomes, strict=True):
             if isinstance(outcome, Exception):
                 stats.failed += 1
@@ -182,7 +276,7 @@ def label_unlabeled(limit: int | None = None, story_ids: list[int] | None = None
                 category=outcome.category,
                 is_genai_ml_relevant=outcome.is_genai_ml_relevant,
                 rationale=outcome.rationale,
-                model=settings.model_name,
+                model=provider.model_name,
                 prompt_version=PROMPT_VERSION,
             )
             stats.labels_created += 1

@@ -38,14 +38,48 @@ class SettingField:
 
 EDITABLE_SETTINGS: tuple[SettingField, ...] = (
     SettingField(
+        "LABELER_PROVIDER",
+        "labeler_provider",
+        "select",
+        "Labeler provider",
+        "Which backend labels stories.",
+        choices=("local", "glm", "deepseek"),
+    ),
+    SettingField(
+        "LABELER_FALLBACK_PROVIDER",
+        "labeler_fallback_provider",
+        "select",
+        "Labeler fallback provider",
+        "Used automatically when the primary has no key or fails a reachability check.",
+        choices=("local", "glm", "deepseek", "none"),
+    ),
+    SettingField(
+        "LOCAL_LLM_API_KEY",
+        "local_llm_api_key",
+        "password",
+        "Local LLM API key",
+        "Self-hosted OpenAI-compatible endpoint's key. Leave blank if unused.",
+    ),
+    SettingField("LOCAL_LLM_BASE_URL", "local_llm_base_url", "text", "Local LLM base URL"),
+    SettingField("LOCAL_MODEL_NAME", "local_model_name", "text", "Local model name"),
+    SettingField(
+        "GLM_LLM_API_KEY",
+        "glm_llm_api_key",
+        "password",
+        "GLM API key",
+        "Z.ai's key. Leave blank if unused.",
+    ),
+    SettingField("GLM_LLM_BASE_URL", "glm_llm_base_url", "text", "GLM base URL"),
+    SettingField("GLM_MODEL_NAME", "glm_model_name", "text", "GLM model name"),
+    SettingField(
         "LLM_API_KEY",
         "llm_api_key",
         "password",
-        "LLM API key",
-        "Any OpenAI-compatible endpoint's key. Leave blank to disable labeling.",
+        "DeepSeek API key",
+        "Any OpenAI-compatible endpoint's key. Leave blank if unused.",
     ),
-    SettingField("LLM_BASE_URL", "llm_base_url", "text", "LLM base URL"),
-    SettingField("MODEL_NAME", "model_name", "text", "Model name"),
+    SettingField("LLM_BASE_URL", "llm_base_url", "text", "DeepSeek base URL"),
+    SettingField("MODEL_NAME", "model_name", "text", "DeepSeek model name"),
     SettingField(
         "BATCH_CONCURRENCY",
         "batch_concurrency",
@@ -108,7 +142,7 @@ def _coerce(field: SettingField, raw: str) -> object:
         return int(raw)
     if field.input_type == "optional_number":
         return int(raw) if raw else None
-    if field.field == "llm_api_key":
+    if field.input_type == "password":
         return raw or None
     return raw
 

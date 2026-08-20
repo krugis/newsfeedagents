@@ -35,12 +35,34 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql://newspipe:newspipe@localhost:5433/newspipe"
 
-    # LLM (any OpenAI-compatible endpoint — DeepSeek, OpenAI, Groq, Together,
-    # Fireworks, etc.). `deepseek-chat` (DeepSeek-V3) is the default: a
+    # Labeler provider selection: which of the three credential sets below
+    # (local/glm/deepseek) actually gets used. `labeler_fallback_provider`
+    # kicks in only when the primary has no key configured or fails a quick
+    # reachability probe (see labeling/labeler.py::resolve_labeler_provider)
+    # — "none" disables fallback. Both selectable independently of each other
+    # so any of the three can be primary, fallback, or unused.
+    labeler_provider: Literal["local", "glm", "deepseek"] = "local"
+    labeler_fallback_provider: Literal["local", "glm", "deepseek", "none"] = "glm"
+
+    # DeepSeek (any OpenAI-compatible endpoint really — Groq, Together,
+    # Fireworks, etc. work too). `deepseek-chat` (DeepSeek-V3) is a
     # cost-effective model well suited to one-sentence labeling.
     llm_api_key: str | None = None
     llm_base_url: str = "https://api.deepseek.com"
     model_name: str = "deepseek-chat"
+
+    # Local self-hosted OpenAI-compatible endpoint (e.g. a llama.cpp server).
+    local_llm_api_key: str | None = None
+    local_llm_base_url: str = "https://api.agate.tr/v1"
+    local_model_name: str = "local"
+
+    # GLM (Z.ai). Defaults to "thinking" (extended reasoning) mode disabled —
+    # it's ~10x slower and adds no labeling-quality benefit for this task, see
+    # labeling/labeler.py's provider config.
+    glm_llm_api_key: str | None = None
+    glm_llm_base_url: str = "https://api.z.ai/api/paas/v4"
+    glm_model_name: str = "glm-4.7-flashx"
+
     batch_concurrency: int = 8
     # Cap on how many unlabeled stories a single `label` run will label, so a
     # backfill burst never blows the API budget in one shot.

@@ -8,13 +8,77 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
+
 from newspipe.config import Settings
+from newspipe.db import telegram_auth
 from newspipe.db.arrivals import insert_arrivals
 from newspipe.db.labels import insert_label
 from newspipe.dedup import run_dedup
 from newspipe.fetchers.base import RawItem
-from newspipe.telegram_bot.bot import build_digest_text
+from newspipe.telegram_bot.bot import build_digest_text, is_allowed
 from newspipe.telegram_bot.digest import format_digest, parse_window
+
+# ---- db.telegram_auth --------------------------------------------------
+
+
+@pytest.fixture
+def tg_chat_id(db_conn):
+    """A distinctive fake chat id, cleaned up from telegram_authorized_chats after."""
+    chat_id = -9999000111
+    yield chat_id
+    db_conn.execute("DELETE FROM telegram_authorized_chats WHERE chat_id = %s", (chat_id,))
+    db_conn.commit()
+
+
+def test_authorize_then_is_authorized(db_conn, tg_chat_id):
+    assert telegram_auth.is_authorized(db_conn, tg_chat_id) is False
+    telegram_auth.authorize(db_conn, tg_chat_id, "group")
+    db_conn.commit()
+    assert telegram_auth.is_authorized(db_conn, tg_chat_id) is True
+
+
+def test_authorize_is_idempotent(db_conn, tg_chat_id):
+    telegram_auth.authorize(db_conn, tg_chat_id, "group")
+    telegram_auth.authorize(db_conn, tg_chat_id, "group")  # must not raise (ON CONFLICT DO NOTHING)
+    db_conn.commit()
+    assert telegram_auth.is_authorized(db_conn, tg_chat_id) is True
+
+
+# ---- is_allowed (access control) -------------------------------------------
+
+
+def test_is_allowed_open_when_nothing_configured(monkeypatch):
+    monkeypatch.setattr(
+        "newspipe.telegram_bot.bot.get_settings",
+        lambda: Settings(telegram_allowed_chat_ids=(), telegram_access_code=None),
+    )
+    assert is_allowed(12345) is True
+    assert is_allowed(-100999) is True
+
+
+def test_is_allowed_restricts_to_the_static_list(monkeypatch):
+    monkeypatch.setattr(
+        "newspipe.telegram_bot.bot.get_settings",
+        lambda: Settings(telegram_allowed_chat_ids=(111, -222), telegram_access_code=None),
+    )
+    assert is_allowed(111) is True
+    assert is_allowed(-222) is True
+    assert is_allowed(333) is False
+
+
+def test_is_allowed_true_for_db_authorized_chat_when_code_configured(
+    monkeypatch, db_conn, tg_chat_id
+):
+    monkeypatch.setattr(
+        "newspipe.telegram_bot.bot.get_settings",
+        lambda: Settings(telegram_allowed_chat_ids=(), telegram_access_code="secret123"),
+    )
+    assert is_allowed(tg_chat_id) is False  # not yet authorized
+    telegram_auth.authorize(db_conn, tg_chat_id, "private")
+    db_conn.commit()
+    assert is_allowed(tg_chat_id) is True
+
 
 # ---- parse_window ---------------------------------------------------------
 

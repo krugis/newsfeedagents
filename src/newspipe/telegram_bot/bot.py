@@ -22,6 +22,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from newspipe.config import get_settings
+from newspipe.db import telegram_auth
 from newspipe.db.engine import connect
 from newspipe.db.stories import select_top_stories
 from newspipe.logging_setup import setup_logging
@@ -48,21 +49,81 @@ def build_digest_text(window_text: str) -> str:
     return format_digest(stories, label)
 
 
+def is_allowed(chat_id: int) -> bool:
+    """True if `chat_id` may use the bot.
+
+    Fully open (True for everyone) only when neither restriction mechanism
+    is configured — the default. Once either `TELEGRAM_ALLOWED_CHAT_IDS` or
+    `TELEGRAM_ACCESS_CODE` is set, access requires being in the static list
+    or having redeemed the join code (see `cmd_join`, persisted in
+    `telegram_authorized_chats`).
+    """
+    settings = get_settings()
+    if not settings.telegram_allowed_chat_ids and not settings.telegram_access_code:
+        return True
+    if chat_id in settings.telegram_allowed_chat_ids:
+        return True
+    with connect() as conn:
+        return telegram_auth.is_authorized(conn, chat_id)
+
+
+async def _reject_if_not_allowed(message: Message) -> bool:
+    """Log-and-swallow a message from a chat outside the allow-list.
+
+    No reply is sent — a stranger who finds/adds the bot gets no signal it's
+    even listening. The log line doubles as how you discover a chat's id to
+    add to the allow-list (send it a message, then check the logs).
+    """
+    if is_allowed(message.chat.id):
+        return False
+    # INFO (not DEBUG) on purpose: this is how you discover a chat's id to
+    # add to TELEGRAM_ALLOWED_CHAT_IDS, and setup_logging()'s default level
+    # is INFO — a DEBUG line here would be invisible during normal setup.
+    logger.info(
+        "chat_not_allowed",
+        extra={"extra_chat_id": message.chat.id, "extra_chat_type": message.chat.type},
+    )
+    return True
+
+
 @router.message(Command("news", "digest"))
 async def cmd_news(message: Message, command: CommandObject) -> None:
+    if await _reject_if_not_allowed(message):
+        return
     text = build_digest_text(command.args or "")
     await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
 @router.message(Command("start", "help"))
 async def cmd_help(message: Message) -> None:
+    if await _reject_if_not_allowed(message):
+        return
     await message.answer(_HELP_TEXT)
+
+
+@router.message(Command("join"))
+async def cmd_join(message: Message, command: CommandObject) -> None:
+    """Self-service authorization: `/join <code>` — deliberately NOT gated by
+    `_reject_if_not_allowed`, since an unauthorized chat is exactly who needs
+    to reach this."""
+    settings = get_settings()
+    if not settings.telegram_access_code:
+        await message.answer("This bot isn't using invite codes.")
+        return
+    if (command.args or "").strip() != settings.telegram_access_code:
+        await message.answer("That code didn't work.")
+        return
+    with connect() as conn:
+        telegram_auth.authorize(conn, message.chat.id, message.chat.type)
+    await message.answer("You're in — try /news.")
 
 
 @router.message()
 async def on_mention(message: Message, bot: Bot) -> None:
     """Catches whatever privacy mode still lets through that isn't a command
     handled above: an @mention in a group, or a reply to this bot."""
+    if await _reject_if_not_allowed(message):
+        return
     text = message.text or ""
     if message.chat.type == "private":
         reply_text = build_digest_text(text)

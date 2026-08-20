@@ -322,6 +322,14 @@ same pattern as `ADMIN_PASSWORD`.
   "privacy mode" already filters what a group forwards to the bot down to
   commands, @mentions, and replies to its own messages — no manual
   mention-detection needed for the common case.
+- **Access control:** two mechanisms, either or both. `TELEGRAM_ALLOWED_CHAT_IDS`
+  (comma-separated, empty = open) is a static admin list — message the bot
+  from a chat and check the logs for a `chat_not_allowed` line to find its
+  id. `TELEGRAM_ACCESS_CODE` is self-service: anyone who sends `/join <code>`
+  (matching this) gets persisted as authorized (`telegram_authorized_chats`
+  table, survives restarts) — share the code instead of collecting ids
+  yourself. Setting either one switches the bot from open to restricted; an
+  unlisted/unauthorized chat gets silence, not a "not authorized" reply.
 - **Scheduled:** if `TELEGRAM_DIGEST_CHAT_IDS` (comma-separated, negative
   for groups) is set, a daily job (`TELEGRAM_DAILY_DIGEST_CRON_HOUR`/
   `_MINUTE`, default 08:00 UTC) pushes "today so far" to each listed chat.
@@ -427,6 +435,8 @@ Every setting lives in `.env` (see `.env.example` for the full list):
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / *(unset — login refused)*      | Web UI login; login is disabled until `ADMIN_PASSWORD` is set |
 | `WEB_SESSION_SECRET` | *(auto-generated per process start)*                | Signs the session cookie; set explicitly for sessions to survive a restart |
 | `TELEGRAM_BOT_TOKEN` | *(unset — bot refuses to start)*                     | Token from @BotFather (see [Telegram bot](#telegram-bot)) |
+| `TELEGRAM_ALLOWED_CHAT_IDS` | *(unset — open to any chat)*                   | Comma-separated chat ids allowed to use the bot at all |
+| `TELEGRAM_ACCESS_CODE` | *(unset — `/join` disabled)*                       | Self-service: `/join <code>` persists that chat as authorized |
 | `TELEGRAM_DIGEST_CHAT_IDS` | *(unset — no scheduled push)*                  | Comma-separated chat ids for the scheduled daily push |
 | `TELEGRAM_DAILY_DIGEST_CRON_HOUR` / `_MINUTE` | `8` / `0`                  | Scheduled daily push cadence (APScheduler cron fields) |
 | `TELEGRAM_DEFAULT_WINDOW_HOURS` | `3`                                       | Fallback lookback window when a request doesn't specify one |

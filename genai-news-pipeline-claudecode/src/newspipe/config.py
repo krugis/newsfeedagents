@@ -118,6 +118,21 @@ class Settings(BaseSettings):
     # .env, which means sessions don't survive a restart — fine for an admin
     # tool; set it explicitly if that's undesirable.
     web_session_secret: str = Field(default_factory=lambda: secrets.token_hex(32))
+    # Where the login form lives. Not linked from any page (base.html has no
+    # "Admin Login" link) — set this to an unguessable path in .env so the
+    # login form itself isn't discoverable by casually browsing the site.
+    # `/admin`/`/news` still redirect here when unauthenticated (so a
+    # bookmarked `/admin` still works for the operator), which does reveal
+    # the path to anyone who tries those URLs directly — this is obscurity on
+    # top of the password, not a substitute for it.
+    admin_login_path: str = "/login"
+
+    # Topic search (/topic web page): title search across all stories
+    # (labeled or not) in the last N days. `topic_search_max_days` caps how
+    # far back a request may reach.
+    topic_search_default_days: int = 3
+    topic_search_max_days: int = 7
+    topic_search_limit: int = 30
 
     @field_validator("label_categories", mode="before")
     @classmethod
@@ -138,6 +153,25 @@ class Settings(BaseSettings):
                 "1 <= importance_min < importance_max <= 100"
             )
         return self
+
+    @model_validator(mode="after")
+    def _validate_topic_search_days(self) -> Settings:
+        if not (1 <= self.topic_search_default_days <= self.topic_search_max_days):
+            raise ValueError(
+                "topic_search_default_days must satisfy "
+                "1 <= topic_search_default_days <= topic_search_max_days"
+            )
+        return self
+
+    @field_validator("admin_login_path")
+    @classmethod
+    def _validate_admin_login_path(cls, value: str) -> str:
+        if not value.startswith("/") or value.startswith("//"):
+            raise ValueError("admin_login_path must be an absolute path, e.g. /login")
+        reserved = {"/", "/topic", "/admin", "/news", "/logout"}
+        if value in reserved or value.startswith("/admin/"):
+            raise ValueError(f"admin_login_path must not collide with a reserved route: {value}")
+        return value
 
     @field_validator("retention_days")
     @classmethod

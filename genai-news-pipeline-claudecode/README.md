@@ -285,8 +285,20 @@ dev server used by `python -m newspipe web` directly — see that unit file).
   stories, hottest and most important first, lead story + list — the actual
   point of the pipeline. Falls back to the most recent day with any stories
   so it's never blank before today's first labeling run.
+- **`/topic`** — public, no login: keyword search across *all* stories
+  (`?q=`), labeled or not, GenAI/ML-relevant or not — unlike `/`, an
+  unlabeled match still shows up, badged "Unlabeled" instead of waiting for
+  a labeling run. Defaults to the last `TOPIC_SEARCH_DEFAULT_DAYS` days;
+  `?days=` widens that up to `TOPIC_SEARCH_MAX_DAYS`. See
+  [Topic search](#topic-search) for how matches are ranked.
 - **`/admin`** and **`/news`** sit behind one admin login (session cookie,
-  single account from `ADMIN_USERNAME`/`ADMIN_PASSWORD` — no user table).
+  single account from `ADMIN_USERNAME`/`ADMIN_PASSWORD` — no user table). The
+  login form itself is at `ADMIN_LOGIN_PATH` (default `/login`), which is
+  **not** linked from anywhere in the UI — set it to an unguessable path per
+  deployment so the login form isn't discoverable by browsing the site (note:
+  `/admin`/`/news` still redirect there when unauthenticated, so visiting
+  those URLs directly does reveal the path — this is obscurity layered on
+  top of the password, not instead of it).
   `/admin` renders every editable setting from [Configuration](#configuration)
   except `DATABASE_URL` (changing the DB connection via a form served by a
   connection to that same DB would be a footgun) as a form; saving
@@ -307,6 +319,36 @@ front page shows nothing sensitive, but `/admin`'s login has no
 rate-limiting or CSRF protection — `ADMIN_PASSWORD` is plaintext in `.env`
 (same handling as `LLM_API_KEY`). Acceptable for a real password over HTTPS
 behind a single operator; revisit if that stops being true.
+
+## Topic search
+
+`/topic` searches `stories.title` across *all* stories in the window —
+labeled or not, relevant-or-not — and ranks results
+by relevance rather than by importance/hotness (`select_stories_by_topic`,
+`db/stories.py`). Two tiers, tried in order:
+
+1. **Full-text search** — `websearch_to_tsquery('english', query)` against a
+   generated `title_tsv tsvector` column (GIN-indexed), ranked by `ts_rank`.
+   Multiple words are implicitly AND'ed (`gpt 5` requires both terms);
+   `websearch_to_tsquery` also understands quoted phrases and `-exclusions`.
+2. **Trigram fuzzy fallback** (`pg_trgm`) — only when tier 1 finds nothing.
+   Ranks by `word_similarity(query, title)` (the best-matching substring's
+   trigram similarity, not the whole title's — appropriate for a short query
+   against a long headline), keeping matches above a `0.3` similarity floor.
+   This is what makes `/topic andropic` still surface an "Anthropic" story
+   despite the typo — trigram matching is inherently about shared
+   3-character substrings, though, so a fuzzy match can occasionally favor a
+   different plausible word (e.g. "android") over the one you meant; it's a
+   best-effort net for typos, not a spell-checker.
+
+Chosen over `title ILIKE '%query%'` (the original implementation): substring
+matching can't distinguish "mentions the term once in passing" from "is
+about the term", and does nothing for a misspelled query. Chosen over
+embeddings/pgvector semantic search: both tiers here are native to Postgres
+(no new service, no embedding-call cost/latency) and are a good fit for a
+keyword topic search — semantic/conceptual matching (finding a story that's
+*about* a topic without ever using the word) would need vectors, but that's
+a bigger lift than this feature currently calls for.
 
 ## Logging
 
@@ -394,6 +436,10 @@ Every setting lives in `.env` (see `.env.example` for the full list):
 | `WEB_HOST` / `WEB_PORT` | `127.0.0.1` / `8010`                              | Web UI bind address (see [Web UI](#web-ui)) |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / *(unset — login refused)*      | Web UI login; login is disabled until `ADMIN_PASSWORD` is set |
 | `WEB_SESSION_SECRET` | *(auto-generated per process start)*                | Signs the session cookie; set explicitly for sessions to survive a restart |
+| `ADMIN_LOGIN_PATH`   | `/login`                                              | Path the login form is served at; not linked from any page, set to an unguessable value per deployment |
+| `TOPIC_SEARCH_DEFAULT_DAYS` | `3`                                          | `/topic` default lookback in days |
+| `TOPIC_SEARCH_MAX_DAYS` | `7`                                              | `/topic` max lookback a request may widen to |
+| `TOPIC_SEARCH_LIMIT` | `30`                                                | Max stories returned per topic search |
 
 ## Database schema
 
@@ -407,6 +453,8 @@ sources (registry) 1─N arrivals (raw, append-only) N─1 stories (deduped) 1�
   `(source_id, external_id)` makes fetching idempotent.
 - `stories` — canonical deduplicated stories (`canonical_url` unique, plus
   `title_hash` for title-based matching, `arrival_count`, `hn_front_page`).
+  `title_tsv` (generated `tsvector`, GIN-indexed) plus a trigram GIN index on
+  `title` (`pg_trgm`) back `/topic` search — see [Topic search](#topic-search).
 - `labels` — one row per labeling of a story (relabeling / evals later).
 - `pipeline_runs` — one row per pipeline execution.
 

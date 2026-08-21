@@ -59,6 +59,35 @@ def test_logout_clears_session(client):
     assert resp.status_code == 302
 
 
+def test_frontpage_has_no_admin_login_link(client):
+    resp = client.get("/")
+    assert b"Admin Login" not in resp.data
+    assert b"/login" not in resp.data
+
+
+def test_login_path_is_configurable(monkeypatch):
+    patched = Settings(
+        admin_username="tester",
+        admin_password="secret123",
+        web_session_secret="test-secret",
+        admin_login_path="/portal-test123",
+    )
+    monkeypatch.setattr("newspipe.web.app.get_settings", lambda: patched)
+    monkeypatch.setattr("newspipe.web.auth.get_settings", lambda: patched)
+    app = create_app()
+    app.testing = True
+    client = app.test_client()
+
+    assert client.get("/login").status_code == 404
+    assert client.get("/portal-test123").status_code == 200
+
+    resp = client.post(
+        "/portal-test123", data={"username": "tester", "password": "secret123"}
+    )
+    assert resp.status_code == 302
+    assert resp.headers["Location"].endswith("/admin")
+
+
 def test_login_disabled_when_admin_password_unset(monkeypatch):
     patched = Settings(admin_password=None, web_session_secret="test-secret")
     monkeypatch.setattr("newspipe.web.app.get_settings", lambda: patched)

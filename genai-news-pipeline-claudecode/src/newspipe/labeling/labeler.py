@@ -77,16 +77,18 @@ def _provider_reachable(base_url: str) -> bool:
     """Best-effort, single-attempt reachability probe (no retries — this must
     stay fast so an unreachable primary fails over quickly).
 
-    Any HTTP response — even a 4xx/5xx — counts as reachable: it proves the
-    network path and TLS handshake work, which is what a down box/network
-    partition would break. Only a transport-level failure (refused, DNS,
-    timeout) counts as unreachable.
+    A 4xx response counts as reachable: it proves the network path and TLS
+    handshake work, and an unauthenticated bare GET is expected to be
+    rejected by the app itself. A transport-level failure (refused, DNS,
+    timeout) or a 5xx counts as unreachable — a bare GET returning a server
+    error most often means the edge/infra in front of the app is down (e.g.
+    a Cloudflare Tunnel error page), not that the app rejected the request.
     """
     try:
-        httpx.get(base_url, timeout=_REACHABILITY_PROBE_TIMEOUT)
+        response = httpx.get(base_url, timeout=_REACHABILITY_PROBE_TIMEOUT)
     except httpx.TransportError:
         return False
-    return True
+    return response.status_code < 500
 
 
 def resolve_labeler_provider(settings: Settings) -> ProviderConfig:

@@ -222,6 +222,32 @@ table.news td:last-child {
   background: transparent;
 }
 
+.badge-unlabeled {
+  background: transparent;
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.topic-form {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.topic-form input[type="text"] {
+  flex: 1 1 16rem;
+  padding: 0.4rem 0.6rem;
+}
+
+.topic-form label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+
 .headline {
   font-family: Georgia, "Times New Roman", serif;
   line-height: 1.15;

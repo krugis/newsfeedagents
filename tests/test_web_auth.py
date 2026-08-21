@@ -11,7 +11,10 @@ from newspipe.web.app import create_app
 @pytest.fixture
 def client(monkeypatch):
     patched = Settings(
-        admin_username="tester", admin_password="secret123", web_session_secret="test-secret"
+        admin_username="tester",
+        admin_password="secret123",
+        web_session_secret="test-secret",
+        admin_login_path="/login",
     )
     monkeypatch.setattr("newspipe.web.app.get_settings", lambda: patched)
     monkeypatch.setattr("newspipe.web.auth.get_settings", lambda: patched)
@@ -89,7 +92,9 @@ def test_login_path_is_configurable(monkeypatch):
 
 
 def test_login_disabled_when_admin_password_unset(monkeypatch):
-    patched = Settings(admin_password=None, web_session_secret="test-secret")
+    patched = Settings(
+        admin_password=None, web_session_secret="test-secret", admin_login_path="/login"
+    )
     monkeypatch.setattr("newspipe.web.app.get_settings", lambda: patched)
     monkeypatch.setattr("newspipe.web.auth.get_settings", lambda: patched)
     app = create_app()

@@ -106,6 +106,56 @@ def test_topic_search_is_case_insensitive(db_conn, source_scope, client):
     assert b"Zz GEMINI All Caps Story" in resp.data
 
 
+def test_topic_distinguishes_different_queries(db_conn, source_scope, client):
+    """Regression test: two different query terms must not return the same
+    results (the bug report this feature was built to catch — a stale bot
+    process fell through to the plain digest and ignored the query text)."""
+    _make_story(db_conn, source_scope, "zz-topic-distinct-a", "zz-topic-da-1", "Zz Gemini Launch")
+    _make_story(
+        db_conn, source_scope, "zz-topic-distinct-b", "zz-topic-db-1", "Zz Anthropic Funding Round"
+    )
+
+    resp_gemini = client.get("/topic?q=zz gemini")
+    resp_anthropic = client.get("/topic?q=zz anthropic")
+
+    assert b"Zz Gemini Launch" in resp_gemini.data
+    assert b"Zz Anthropic Funding Round" not in resp_gemini.data
+    assert b"Zz Anthropic Funding Round" in resp_anthropic.data
+    assert b"Zz Gemini Launch" not in resp_anthropic.data
+
+
+def test_topic_ranks_more_relevant_title_first(db_conn, source_scope, client):
+    _make_story(
+        db_conn,
+        source_scope,
+        "zz-topic-rank-low",
+        "zz-topic-rank-low-1",
+        "Zz Roundup: gemini mentioned once among many other model releases",
+    )
+    _make_story(
+        db_conn,
+        source_scope,
+        "zz-topic-rank-high",
+        "zz-topic-rank-high-1",
+        "Zz Gemini Gemini Gemini: three Gemini updates in one day",
+    )
+
+    resp = client.get("/topic?q=gemini")
+    body = resp.data.decode()
+
+    assert body.index("Zz Gemini Gemini Gemini") < body.index("Zz Roundup")
+
+
+def test_topic_typo_falls_back_to_fuzzy_match(db_conn, source_scope, client):
+    _make_story(
+        db_conn, source_scope, "zz-topic-fuzzy", "zz-topic-fuzzy-1", "Zz Anthropic Ships Update"
+    )
+
+    resp = client.get("/topic?q=anthropc")  # one letter dropped
+
+    assert b"Zz Anthropic Ships Update" in resp.data
+
+
 def test_topic_excludes_non_matching_title(db_conn, source_scope, client):
     _make_story(db_conn, source_scope, "zz-topic-d", "zz-topic-4", "Zz Totally Unrelated Story")
 

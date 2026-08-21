@@ -50,41 +50,66 @@ def select_top_stories(
     ).fetchall()
 
 
-def select_stories_by_topic(
-    conn: psycopg.Connection, query: str, start: datetime, end: datetime, limit: int
-) -> list[dict]:
-    """Stories whose title matches `query`, first seen in `[start, end)`.
-
-    Unlike `select_top_stories`, this is not restricted to labeled or
-    GenAI/ML-relevant stories — a story with no `labels` row yet still
-    matches, with `is_hot`/`importance`/`category`/`rationale` all `None`
-    (callers show these as "unlabeled"). Labeled matches are ranked most
-    important/hottest first; unlabeled matches sort after, newest first.
-    """
-    pattern = f"%{_escape_like(query)}%"
-    return conn.execute(
-        _LATEST_LABEL_CTE
-        + """
+_TOPIC_SELECT_COLUMNS = """
         SELECT s.story_id, s.title, s.canonical_url, s.first_seen_at, s.arrival_count,
                s.hn_front_page, ll.is_hot, ll.importance, ll.category, ll.rationale,
-               array_agg(DISTINCT src.name ORDER BY src.name) AS sources
+               array_agg(DISTINCT src.name ORDER BY src.name) AS sources,
+"""
+
+_TOPIC_FROM_WHERE = """
           FROM stories s
           LEFT JOIN latest_labels ll ON ll.story_id = s.story_id
           JOIN arrivals a ON a.story_id = s.story_id
           JOIN sources src ON src.source_id = a.source_id
-         WHERE s.title ILIKE %s
+         WHERE {match}
            AND s.first_seen_at >= %s AND s.first_seen_at < %s
          GROUP BY s.story_id, ll.is_hot, ll.importance, ll.category, ll.rationale
-         ORDER BY ll.importance DESC NULLS LAST, ll.is_hot DESC NULLS LAST, s.first_seen_at DESC
+         ORDER BY rank DESC, ll.importance DESC NULLS LAST, ll.is_hot DESC NULLS LAST,
+                  s.first_seen_at DESC
          LIMIT %s
-        """,
-        (pattern, start, end, limit),
+"""
+
+# Trigram similarity below this is treated as noise, not a fuzzy match — chosen
+# to still catch a one-typo miss on a short word (e.g. "andropic" ~ "Anthropic")
+# without matching on mere coincidental letter overlap.
+_FUZZY_SIMILARITY_THRESHOLD = 0.3
+
+
+def select_stories_by_topic(
+    conn: psycopg.Connection, query: str, start: datetime, end: datetime, limit: int
+) -> list[dict]:
+    """Stories whose title matches `query`, first seen in `[start, end)`, ranked by relevance.
+
+    Unlike `select_top_stories`, this is not restricted to labeled or
+    GenAI/ML-relevant stories — a story with no `labels` row yet still
+    matches, with `is_hot`/`importance`/`category`/`rationale` all `None`
+    (callers show these as "unlabeled").
+
+    Two-tier matching: full-text search (`websearch_to_tsquery` against a
+    generated `tsvector` column, ranked by `ts_rank`) is tried first, since
+    it properly weighs term frequency instead of just "does the substring
+    appear". If that finds nothing — e.g. `query` is a typo, or is short
+    enough that `to_tsquery` doesn't stem it usefully — a trigram-similarity
+    fuzzy fallback (`pg_trgm`'s `word_similarity`) catches near-misses.
+    Within each tier, ties break the same way as `select_top_stories`:
+    importance/hotness first, then newest.
+    """
+    rows = conn.execute(
+        _LATEST_LABEL_CTE
+        + _TOPIC_SELECT_COLUMNS
+        + "       ts_rank(s.title_tsv, websearch_to_tsquery('english', %s)) AS rank\n"
+        + _TOPIC_FROM_WHERE.format(match="s.title_tsv @@ websearch_to_tsquery('english', %s)"),
+        (query, query, start, end, limit),
     ).fetchall()
-
-
-def _escape_like(text: str) -> str:
-    """Escape LIKE/ILIKE metacharacters so a topic search treats them literally."""
-    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    if rows:
+        return rows
+    return conn.execute(
+        _LATEST_LABEL_CTE
+        + _TOPIC_SELECT_COLUMNS
+        + "       word_similarity(%s, s.title) AS rank\n"
+        + _TOPIC_FROM_WHERE.format(match="word_similarity(%s, s.title) > %s"),
+        (query, query, _FUZZY_SIMILARITY_THRESHOLD, start, end, limit),
+    ).fetchall()
 
 
 def select_most_recent_labeled_day(

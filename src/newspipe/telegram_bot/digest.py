@@ -48,16 +48,29 @@ def parse_topic_args(text: str, *, default_days: int, max_days: int) -> tuple[st
     return " ".join(parts).strip(), days
 
 
-def format_topic_results(stories: list[dict], query: str, days: int) -> str:
+def _last_updated_line(last_updated: datetime | None) -> str | None:
+    """The trailing "Updated HH:MM UTC" footer line, or None if unknown (no successful run yet)."""
+    if last_updated is None:
+        return None
+    return f"<i>Updated {last_updated.strftime('%H:%M UTC')}</i>"
+
+
+def format_topic_results(
+    stories: list[dict], query: str, days: int, last_updated: datetime | None = None
+) -> str:
     """Render topic-search results (as returned by `db.stories.select_stories_by_topic`) as HTML.
 
     Unlike `format_digest`, a story may be unlabeled (`importance is None`)
-    since topic search isn't restricted to labeled stories.
+    since topic search isn't restricted to labeled stories. `last_updated` —
+    the last successful pipeline run's finish time — is appended as a
+    freshness footer when given (see `db.pipeline_runs`).
     """
     window_label = f"last {days} day{'s' if days != 1 else ''}"
     header = f"<b>Topic: {html.escape(query)}</b> — {html.escape(window_label)}"
+    footer = _last_updated_line(last_updated)
     if not stories:
-        return f"{header}\nNo news found."
+        text = f"{header}\nNo news found."
+        return f"{text}\n\n{footer}" if footer else text
     lines = [header, ""]
     for i, story in enumerate(stories, start=1):
         title = html.escape(story["title"])
@@ -69,18 +82,26 @@ def format_topic_results(stories: list[dict], query: str, days: int) -> str:
         else:
             hot = " · HOT" if story["is_hot"] else ""
             lines.append(f"   <i>{sources}</i> · importance {story['importance']}{hot}")
+    if footer:
+        lines += ["", footer]
     return "\n".join(lines)
 
 
-def format_digest(stories: list[dict], window_label: str) -> str:
+def format_digest(
+    stories: list[dict], window_label: str, last_updated: datetime | None = None
+) -> str:
     """Render stories (as returned by `db.stories.select_top_stories`) as HTML.
 
     Uses Telegram's HTML parse mode rather than MarkdownV2 — titles come from
     external feeds and may contain markdown-special characters that would
     otherwise break parsing; HTML only needs `html.escape` to stay safe.
+    `last_updated` — the last successful pipeline run's finish time — is
+    appended as a freshness footer when given (see `db.pipeline_runs`).
     """
+    footer = _last_updated_line(last_updated)
     if not stories:
-        return f"No GenAI/ML news in the {html.escape(window_label)}."
+        text = f"No GenAI/ML news in the {html.escape(window_label)}."
+        return f"{text}\n\n{footer}" if footer else text
     lines = [f"<b>GenAI/ML News — {html.escape(window_label)}</b>", ""]
     for i, story in enumerate(stories, start=1):
         title = html.escape(story["title"])
@@ -89,4 +110,6 @@ def format_digest(stories: list[dict], window_label: str) -> str:
         hot = " · HOT" if story["is_hot"] else ""
         lines.append(f'{i}. <a href="{url}">{title}</a>')
         lines.append(f"   <i>{sources}</i> · importance {story['importance']}{hot}")
+    if footer:
+        lines += ["", footer]
     return "\n".join(lines)

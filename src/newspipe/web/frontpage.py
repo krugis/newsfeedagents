@@ -16,6 +16,7 @@ from datetime import UTC, date, datetime, timedelta
 from flask import Blueprint, render_template, request
 
 from newspipe.db.engine import connect
+from newspipe.db.pipeline_runs import select_last_successful_run_finished_at
 from newspipe.db.stories import select_most_recent_labeled_day, select_top_stories
 
 bp = Blueprint("frontpage", __name__)
@@ -60,6 +61,7 @@ def frontpage():
                 start, end = _day_bounds(shown_day)
                 stories = select_top_stories(conn, start, end, limit=TOP_STORIES_LIMIT)
                 used_fallback = True
+        last_updated = select_last_successful_run_finished_at(conn)
 
     lead, rest = (stories[0], stories[1:]) if stories else (None, [])
     return render_template(
@@ -69,4 +71,5 @@ def frontpage():
         shown_day=shown_day,
         selectable_days=selectable_days,
         used_fallback=used_fallback,
+        last_updated=last_updated,
     )

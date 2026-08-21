@@ -154,6 +154,12 @@ table.news td:last-child {
   font-style: italic;
 }
 
+.last-updated {
+  margin-top: 0.15rem;
+  font-size: 0.75rem;
+  opacity: 0.55;
+}
+
 .day-picker {
   display: flex;
   gap: 0.4rem;

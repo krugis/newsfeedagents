@@ -4,6 +4,9 @@
 <header class="masthead">
   <h1>Topic Search</h1>
   <p class="tagline">Find news by keyword, across the last {{ max_days }} days</p>
+  {% if last_updated %}
+  <div class="last-updated">Data updated {{ last_updated.strftime('%H:%M UTC') }}</div>
+  {% endif %}
 </header>
 
 <form method="get" class="topic-form">

@@ -6,7 +6,7 @@ own test suite already covers.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -14,6 +14,7 @@ from newspipe.config import Settings
 from newspipe.db import telegram_auth
 from newspipe.db.arrivals import insert_arrivals
 from newspipe.db.labels import insert_label
+from newspipe.db.pipeline_runs import finalize_pipeline_run, insert_pipeline_run
 from newspipe.dedup import run_dedup
 from newspipe.fetchers.base import RawItem
 from newspipe.telegram_bot.bot import build_digest_text, build_topic_text, is_allowed
@@ -149,6 +150,16 @@ def test_format_digest_escapes_html_and_includes_fields():
     assert "HOT" in text
 
 
+def test_format_digest_includes_last_updated_footer():
+    text = format_digest([], "last 6h", datetime(2026, 8, 21, 8, 6, tzinfo=UTC))
+    assert "Updated 08:06 UTC" in text
+
+
+def test_format_digest_omits_footer_when_last_updated_is_none():
+    text = format_digest([], "last 6h", None)
+    assert "Updated" not in text
+
+
 def test_format_digest_numbers_multiple_stories():
     stories = [
         {
@@ -204,6 +215,21 @@ def test_build_digest_text_includes_recent_labeled_story(monkeypatch, db_conn, s
     assert "Zz Telegram Story" in text
     assert "importance 9" in text
     assert "HOT" in text
+
+
+def test_build_digest_text_includes_last_updated_footer(monkeypatch, db_conn, source_scope):
+    monkeypatch.setattr(
+        "newspipe.telegram_bot.bot.get_settings",
+        lambda: Settings(telegram_default_window_hours=3, telegram_digest_limit=10),
+    )
+    source_scope("zz-tg-updated-src")
+    run_id = insert_pipeline_run(db_conn, "zz-tg-updated-run", datetime.now(UTC))
+    finalize_pipeline_run(db_conn, run_id, status="success", stats={})
+    db_conn.commit()
+
+    text = build_digest_text("6h")
+
+    assert "Updated" in text
 
 
 # ---- parse_topic_args ------------------------------------------------------
@@ -279,6 +305,16 @@ def test_format_topic_results_labeled_and_unlabeled():
     assert "unlabeled" in text
 
 
+def test_format_topic_results_includes_last_updated_footer():
+    text = format_topic_results([], "gemini", 3, datetime(2026, 8, 21, 8, 6, tzinfo=UTC))
+    assert "Updated 08:06 UTC" in text
+
+
+def test_format_topic_results_omits_footer_when_last_updated_is_none():
+    text = format_topic_results([], "gemini", 3, None)
+    assert "Updated" not in text
+
+
 def test_format_topic_results_escapes_html():
     stories = [
         {
@@ -323,6 +359,23 @@ def test_build_topic_text_finds_matching_story(monkeypatch, db_conn, source_scop
 
     assert "Zz Telegram Gemini Story" in text
     assert "unlabeled" in text
+
+
+def test_build_topic_text_includes_last_updated_footer(monkeypatch, db_conn, source_scope):
+    monkeypatch.setattr(
+        "newspipe.telegram_bot.bot.get_settings",
+        lambda: Settings(
+            topic_search_default_days=3, topic_search_max_days=7, topic_search_limit=10
+        ),
+    )
+    source_scope("zz-tg-topic-updated-src")
+    run_id = insert_pipeline_run(db_conn, "zz-tg-topic-updated-run", datetime.now(UTC))
+    finalize_pipeline_run(db_conn, run_id, status="success", stats={})
+    db_conn.commit()
+
+    text = build_topic_text("gemini")
+
+    assert "Updated" in text
 
 
 def test_build_topic_text_empty_query_returns_usage(monkeypatch):

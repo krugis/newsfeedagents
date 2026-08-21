@@ -24,6 +24,7 @@ from apscheduler.triggers.cron import CronTrigger
 from newspipe.config import get_settings
 from newspipe.db import telegram_auth
 from newspipe.db.engine import connect
+from newspipe.db.pipeline_runs import select_last_successful_run_finished_at
 from newspipe.db.stories import select_stories_by_topic, select_top_stories
 from newspipe.logging_setup import setup_logging
 from newspipe.telegram_bot.digest import (
@@ -54,7 +55,8 @@ def build_digest_text(window_text: str) -> str:
     start = end - window
     with connect() as conn:
         stories = select_top_stories(conn, start, end, limit=settings.telegram_digest_limit)
-    return format_digest(stories, label)
+        last_updated = select_last_successful_run_finished_at(conn)
+    return format_digest(stories, label, last_updated)
 
 
 def build_topic_text(args_text: str) -> str:
@@ -78,7 +80,8 @@ def build_topic_text(args_text: str) -> str:
         stories = select_stories_by_topic(
             conn, query, start, end, limit=settings.topic_search_limit
         )
-    return format_topic_results(stories, query, days)
+        last_updated = select_last_successful_run_finished_at(conn)
+    return format_topic_results(stories, query, days, last_updated)
 
 
 def is_allowed(chat_id: int) -> bool:

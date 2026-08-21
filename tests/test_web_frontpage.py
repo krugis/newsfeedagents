@@ -8,6 +8,7 @@ import pytest
 
 from newspipe.db.arrivals import insert_arrivals
 from newspipe.db.labels import insert_label
+from newspipe.db.pipeline_runs import finalize_pipeline_run, insert_pipeline_run
 from newspipe.db.stories import select_most_recent_labeled_day, select_top_stories
 from newspipe.dedup import run_dedup
 from newspipe.fetchers.base import RawItem
@@ -198,3 +199,14 @@ def test_frontpage_day_outside_window_falls_back_to_default(client):
 def test_frontpage_invalid_day_format_is_ignored(client):
     resp = client.get("/?day=not-a-date")
     assert resp.status_code == 200
+
+
+def test_frontpage_shows_last_updated(db_conn, source_scope, client):
+    source_scope("zz-front-updated")
+    run_id = insert_pipeline_run(db_conn, "zz-front-updated-run", datetime.now(UTC))
+    finalize_pipeline_run(db_conn, run_id, status="success", stats={})
+    db_conn.commit()
+
+    resp = client.get("/")
+
+    assert b"Data updated" in resp.data

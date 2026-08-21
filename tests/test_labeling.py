@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
 from pydantic import ValidationError
 
@@ -267,12 +268,22 @@ def test_provider_reachable_false_on_connection_error(monkeypatch):
     assert _provider_reachable("https://unreachable.example") is False
 
 
-def test_provider_reachable_true_on_any_http_response(monkeypatch):
+def test_provider_reachable_true_on_client_error_response(monkeypatch):
     def fake_get(url, timeout):
-        return object()  # any response object, including error statuses, counts as reachable
+        return httpx.Response(401, request=httpx.Request("GET", url))
 
     monkeypatch.setattr("newspipe.labeling.labeler.httpx.get", fake_get)
     assert _provider_reachable("https://example.com") is True
+
+
+def test_provider_reachable_false_on_server_error_response(monkeypatch):
+    def fake_get(url, timeout):
+        # e.g. a Cloudflare Tunnel error page (530) — the edge answered, but
+        # the actual backend behind it is unreachable.
+        return httpx.Response(530, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("newspipe.labeling.labeler.httpx.get", fake_get)
+    assert _provider_reachable("https://example.com") is False
 
 
 # ---- persistence layer -------------------------------------------------

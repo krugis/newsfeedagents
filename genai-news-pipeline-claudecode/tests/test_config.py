@@ -74,7 +74,9 @@ def test_label_order_rejects_invalid_value():
 
 
 def test_admin_login_path_default():
-    assert Settings().admin_login_path == "/login"
+    # _env_file=None: isolate from the real .env, which sets ADMIN_LOGIN_PATH
+    # to a private deployment-specific value.
+    assert Settings(_env_file=None).admin_login_path == "/login"
 
 
 def test_admin_login_path_accepts_custom_value():

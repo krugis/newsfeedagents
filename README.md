@@ -286,6 +286,11 @@ dev server used by `python -m newspipe web` directly — see that unit file).
   stories, hottest and most important first, lead story + list — the actual
   point of the pipeline. Falls back to the most recent day with any stories
   so it's never blank before today's first labeling run.
+- **`/topic`** — public, no login: keyword search across *all* stories
+  (`?q=`), labeled or not, GenAI/ML-relevant or not — unlike `/`, an
+  unlabeled match still shows up, badged "Unlabeled" instead of waiting for
+  a labeling run. Defaults to the last `TOPIC_SEARCH_DEFAULT_DAYS` days;
+  `?days=` widens that up to `TOPIC_SEARCH_MAX_DAYS`.
 - **`/admin`** and **`/news`** sit behind one admin login (session cookie,
   single account from `ADMIN_USERNAME`/`ADMIN_PASSWORD` — no user table).
   `/admin` renders every editable setting from [Configuration](#configuration)
@@ -322,6 +327,12 @@ same pattern as `ADMIN_PASSWORD`.
   "privacy mode" already filters what a group forwards to the bot down to
   commands, @mentions, and replies to its own messages — no manual
   mention-detection needed for the common case.
+- **Topic search:** `/topic <keyword> [days]` — title search across *all*
+  stories in the window (labeled or not), same query the `/topic` web page
+  runs. `/topic gemini` searches the last `TOPIC_SEARCH_DEFAULT_DAYS` days
+  (3 by default); a trailing integer overrides that, clamped to
+  `TOPIC_SEARCH_MAX_DAYS` (7 by default) — `/topic gemini 7`. An unlabeled
+  match is shown as "unlabeled" instead of being left out.
 - **Access control:** two mechanisms, either or both. `TELEGRAM_ALLOWED_CHAT_IDS`
   (comma-separated, empty = open) is a static admin list — message the bot
   from a chat and check the logs for a `chat_not_allowed` line to find its
@@ -441,6 +452,9 @@ Every setting lives in `.env` (see `.env.example` for the full list):
 | `TELEGRAM_DAILY_DIGEST_CRON_HOUR` / `_MINUTE` | `8` / `0`                  | Scheduled daily push cadence (APScheduler cron fields) |
 | `TELEGRAM_DEFAULT_WINDOW_HOURS` | `3`                                       | Fallback lookback window when a request doesn't specify one |
 | `TELEGRAM_DIGEST_LIMIT` | `10`                                              | Max stories per digest message |
+| `TOPIC_SEARCH_DEFAULT_DAYS` | `3`                                          | `/topic` (web + bot) default lookback in days |
+| `TOPIC_SEARCH_MAX_DAYS` | `7`                                              | `/topic` max lookback a request may widen to |
+| `TOPIC_SEARCH_LIMIT` | `30`                                                | Max stories returned per topic search |
 
 ## Database schema
 

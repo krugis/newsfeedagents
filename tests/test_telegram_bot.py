@@ -16,8 +16,13 @@ from newspipe.db.arrivals import insert_arrivals
 from newspipe.db.labels import insert_label
 from newspipe.dedup import run_dedup
 from newspipe.fetchers.base import RawItem
-from newspipe.telegram_bot.bot import build_digest_text, is_allowed
-from newspipe.telegram_bot.digest import format_digest, parse_window
+from newspipe.telegram_bot.bot import build_digest_text, build_topic_text, is_allowed
+from newspipe.telegram_bot.digest import (
+    format_digest,
+    format_topic_results,
+    parse_topic_args,
+    parse_window,
+)
 
 # ---- db.telegram_auth --------------------------------------------------
 
@@ -199,6 +204,134 @@ def test_build_digest_text_includes_recent_labeled_story(monkeypatch, db_conn, s
     assert "Zz Telegram Story" in text
     assert "importance 9" in text
     assert "HOT" in text
+
+
+# ---- parse_topic_args ------------------------------------------------------
+
+
+def test_parse_topic_args_query_only_uses_default_days():
+    query, days = parse_topic_args("gemini", default_days=3, max_days=7)
+    assert query == "gemini"
+    assert days == 3
+
+
+def test_parse_topic_args_query_and_days():
+    query, days = parse_topic_args("gemini 7", default_days=3, max_days=7)
+    assert query == "gemini"
+    assert days == 7
+
+
+def test_parse_topic_args_multiword_query():
+    query, days = parse_topic_args("open ai gpt 5", default_days=3, max_days=7)
+    assert query == "open ai gpt"
+    assert days == 5
+
+
+def test_parse_topic_args_days_clamped_to_max():
+    query, days = parse_topic_args("gemini 999", default_days=3, max_days=7)
+    assert query == "gemini"
+    assert days == 7
+
+
+def test_parse_topic_args_days_clamped_to_min():
+    query, days = parse_topic_args("gemini 0", default_days=3, max_days=7)
+    assert query == "gemini"
+    assert days == 1
+
+
+def test_parse_topic_args_empty_text():
+    query, days = parse_topic_args("", default_days=3, max_days=7)
+    assert query == ""
+    assert days == 3
+
+
+# ---- format_topic_results ---------------------------------------------------
+
+
+def test_format_topic_results_empty():
+    text = format_topic_results([], "gemini", 3)
+    assert "Topic: gemini" in text
+    assert "No news found." in text
+
+
+def test_format_topic_results_labeled_and_unlabeled():
+    stories = [
+        {
+            "title": "Zz Labeled Gemini Story",
+            "canonical_url": "https://example.com/1",
+            "sources": ["Src"],
+            "is_hot": True,
+            "importance": 8,
+        },
+        {
+            "title": "Zz Unlabeled Gemini Story",
+            "canonical_url": "https://example.com/2",
+            "sources": ["Src"],
+            "is_hot": None,
+            "importance": None,
+        },
+    ]
+    text = format_topic_results(stories, "gemini", 7)
+    assert "Zz Labeled Gemini Story" in text
+    assert "importance 8" in text
+    assert "HOT" in text
+    assert "Zz Unlabeled Gemini Story" in text
+    assert "unlabeled" in text
+
+
+def test_format_topic_results_escapes_html():
+    stories = [
+        {
+            "title": "<script>alert(1)</script>",
+            "canonical_url": None,
+            "sources": ["Src"],
+            "is_hot": False,
+            "importance": None,
+        }
+    ]
+    text = format_topic_results(stories, "gemini", 3)
+    assert "<script>" not in text
+    assert "&lt;script&gt;" in text
+
+
+# ---- build_topic_text (real DB, no network) ---------------------------------
+
+
+def test_build_topic_text_finds_matching_story(monkeypatch, db_conn, source_scope):
+    monkeypatch.setattr(
+        "newspipe.telegram_bot.bot.get_settings",
+        lambda: Settings(
+            topic_search_default_days=3, topic_search_max_days=7, topic_search_limit=10
+        ),
+    )
+    sid = source_scope("zz-tg-topic-src")
+    insert_arrivals(
+        db_conn,
+        sid,
+        [
+            RawItem(
+                external_id="zz-tg-topic-1",
+                url="https://example.com/tg-topic1",
+                title="Zz Telegram Gemini Story",
+            )
+        ],
+    )
+    db_conn.commit()
+    run_dedup()
+
+    text = build_topic_text("gemini")
+
+    assert "Zz Telegram Gemini Story" in text
+    assert "unlabeled" in text
+
+
+def test_build_topic_text_empty_query_returns_usage(monkeypatch):
+    monkeypatch.setattr(
+        "newspipe.telegram_bot.bot.get_settings",
+        lambda: Settings(topic_search_default_days=3, topic_search_max_days=7),
+    )
+    text = build_topic_text("   ")
+    assert "Usage: /topic" in text
 
 
 def test_build_digest_text_excludes_non_genai_relevant(monkeypatch, db_conn, source_scope):

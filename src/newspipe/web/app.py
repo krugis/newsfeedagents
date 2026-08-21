@@ -20,6 +20,7 @@ from newspipe.web.actions import ActionBusyError, run_action
 from newspipe.web.auth import bp as auth_bp
 from newspipe.web.auth import login_required
 from newspipe.web.frontpage import bp as frontpage_bp
+from newspipe.web.topic import bp as topic_bp
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -138,4 +139,5 @@ def create_app() -> Flask:
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(frontpage_bp)
+    app.register_blueprint(topic_bp)
     return app

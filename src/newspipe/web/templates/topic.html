@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Topic Search — newspipe{% endblock %}
+{% block content %}
+<header class="masthead">
+  <h1>Topic Search</h1>
+  <p class="tagline">Find news by keyword, across the last {{ max_days }} days</p>
+</header>
+
+<form method="get" class="topic-form">
+  <input type="text" name="q" value="{{ query }}" placeholder="e.g. gemini" autofocus>
+  <label>Days
+    <select name="days">
+      {% for n in range(1, max_days + 1) %}
+      <option value="{{ n }}" {% if n == days %}selected{% endif %}>{{ n }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit">Search</button>
+</form>
+
+{% if searched %}
+  {% if not stories %}
+  <p class="empty">No news found for &ldquo;{{ query }}&rdquo; in the last {{ days }} day{{ 's' if days != 1 else '' }}.</p>
+  {% else %}
+  <ul class="story-list">
+    {% for item in stories %}
+    <li class="story-item">
+      <div class="badges">
+        {% if item.importance is none %}
+        <span class="badge badge-unlabeled">Unlabeled</span>
+        {% else %}
+        {% if item.is_hot %}<span class="badge badge-hot">HOT</span>{% endif %}
+        <span class="badge badge-category">{{ item.category }}</span>
+        <span class="badge badge-importance">{{ item.importance }}</span>
+        {% endif %}
+      </div>
+      {% if item.canonical_url %}
+      <h3 class="headline"><a href="{{ item.canonical_url }}">{{ item.title }}</a></h3>
+      {% else %}
+      <h3 class="headline">{{ item.title }}</h3>
+      {% endif %}
+      {% if item.rationale %}<p class="dek">{{ item.rationale }}</p>{% endif %}
+      <p class="byline">
+        {{ item.sources|join(', ') }} · {{ item.first_seen_at.strftime('%Y-%m-%d %H:%M') }} UTC
+      </p>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+{% endif %}
+{% endblock %}

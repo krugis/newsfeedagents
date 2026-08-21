@@ -8,6 +8,7 @@
 <body>
   <nav>
     <a href="{{ url_for('frontpage.frontpage') }}">Top News</a>
+    <a href="{{ url_for('topic.topic_search') }}">Topic Search</a>
     {% if session.get('authenticated') %}
     <a href="{{ url_for('admin.admin_page') }}">Admin</a>
     <a href="{{ url_for('admin.news_page') }}">News</a>

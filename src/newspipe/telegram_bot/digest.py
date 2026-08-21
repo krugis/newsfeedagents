@@ -32,6 +32,46 @@ def parse_window(text: str, *, default_hours: int) -> tuple[timedelta, str]:
     return timedelta(hours=default_hours), f"last {default_hours}h"
 
 
+def parse_topic_args(text: str, *, default_days: int, max_days: int) -> tuple[str, int]:
+    """Parse `/topic <query> [days]` args.
+
+    The last whitespace-separated token, if a bare non-negative integer, is
+    the days window (clamped to `[1, max_days]`); everything before it is
+    the search query. `/topic gemini` -> ("gemini", default_days);
+    `/topic gemini 7` -> ("gemini", 7); `/topic foo bar 40` -> ("foo bar", max_days).
+    """
+    parts = text.strip().split()
+    days = default_days
+    if parts and parts[-1].isdigit():
+        days = min(max(int(parts[-1]), 1), max_days)
+        parts = parts[:-1]
+    return " ".join(parts).strip(), days
+
+
+def format_topic_results(stories: list[dict], query: str, days: int) -> str:
+    """Render topic-search results (as returned by `db.stories.select_stories_by_topic`) as HTML.
+
+    Unlike `format_digest`, a story may be unlabeled (`importance is None`)
+    since topic search isn't restricted to labeled stories.
+    """
+    window_label = f"last {days} day{'s' if days != 1 else ''}"
+    header = f"<b>Topic: {html.escape(query)}</b> — {html.escape(window_label)}"
+    if not stories:
+        return f"{header}\nNo news found."
+    lines = [header, ""]
+    for i, story in enumerate(stories, start=1):
+        title = html.escape(story["title"])
+        url = html.escape(story["canonical_url"] or "")
+        sources = html.escape(", ".join(story["sources"]))
+        lines.append(f'{i}. <a href="{url}">{title}</a>')
+        if story["importance"] is None:
+            lines.append(f"   <i>{sources}</i> · unlabeled")
+        else:
+            hot = " · HOT" if story["is_hot"] else ""
+            lines.append(f"   <i>{sources}</i> · importance {story['importance']}{hot}")
+    return "\n".join(lines)
+
+
 def format_digest(stories: list[dict], window_label: str) -> str:
     """Render stories (as returned by `db.stories.select_top_stories`) as HTML.
 

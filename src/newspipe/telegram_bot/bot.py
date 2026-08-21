@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from aiogram import Bot, Dispatcher, Router
 from aiogram.filters import Command, CommandObject
@@ -24,17 +24,25 @@ from apscheduler.triggers.cron import CronTrigger
 from newspipe.config import get_settings
 from newspipe.db import telegram_auth
 from newspipe.db.engine import connect
-from newspipe.db.stories import select_top_stories
+from newspipe.db.stories import select_stories_by_topic, select_top_stories
 from newspipe.logging_setup import setup_logging
-from newspipe.telegram_bot.digest import format_digest, parse_window
+from newspipe.telegram_bot.digest import (
+    format_digest,
+    format_topic_results,
+    parse_topic_args,
+    parse_window,
+)
 
 logger = logging.getLogger(__name__)
 
 router = Router()
 
+_TOPIC_USAGE = "Usage: /topic <keyword> [days] — e.g. /topic gemini 7"
+
 _HELP_TEXT = (
     "Ask me for GenAI/ML news: /news, /news 6h, /news today — "
-    "or @-mention me the same way in a group."
+    "or @-mention me the same way in a group. "
+    "Search a topic: /topic gemini (last 3 days) or /topic gemini 7 (up to 7 days)."
 )
 
 
@@ -47,6 +55,30 @@ def build_digest_text(window_text: str) -> str:
     with connect() as conn:
         stories = select_top_stories(conn, start, end, limit=settings.telegram_digest_limit)
     return format_digest(stories, label)
+
+
+def build_topic_text(args_text: str) -> str:
+    """Query the DB and render topic-search results for the given free-text args.
+
+    `args_text` is the raw `/topic` command args: `<query> [days]`, days
+    optional and defaulting/clamped per `topic_search_default_days`/
+    `topic_search_max_days` (see `digest.parse_topic_args`).
+    """
+    settings = get_settings()
+    query, days = parse_topic_args(
+        args_text,
+        default_days=settings.topic_search_default_days,
+        max_days=settings.topic_search_max_days,
+    )
+    if not query:
+        return _TOPIC_USAGE
+    end = datetime.now(UTC)
+    start = end - timedelta(days=days)
+    with connect() as conn:
+        stories = select_stories_by_topic(
+            conn, query, start, end, limit=settings.topic_search_limit
+        )
+    return format_topic_results(stories, query, days)
 
 
 def is_allowed(chat_id: int) -> bool:
@@ -91,6 +123,17 @@ async def cmd_news(message: Message, command: CommandObject) -> None:
     if await _reject_if_not_allowed(message):
         return
     text = build_digest_text(command.args or "")
+    await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@router.message(Command("topic"))
+async def cmd_topic(message: Message, command: CommandObject) -> None:
+    if await _reject_if_not_allowed(message):
+        return
+    if not (command.args or "").strip():
+        await message.answer(_TOPIC_USAGE)
+        return
+    text = build_topic_text(command.args)
     await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
 
 

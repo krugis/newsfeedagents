@@ -141,6 +141,13 @@ class Settings(BaseSettings):
     telegram_default_window_hours: int = 3
     telegram_digest_limit: int = 10
 
+    # Topic search (/topic web page and bot command): title search across all
+    # stories (labeled or not) in the last N days. `topic_search_max_days`
+    # caps how far back a request may reach.
+    topic_search_default_days: int = 3
+    topic_search_max_days: int = 7
+    topic_search_limit: int = 30
+
     @field_validator("label_categories", mode="before")
     @classmethod
     def _parse_categories(cls, value: object) -> object:
@@ -166,6 +173,15 @@ class Settings(BaseSettings):
             raise ValueError(
                 "importance_min/importance_max must satisfy "
                 "1 <= importance_min < importance_max <= 100"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_topic_search_days(self) -> Settings:
+        if not (1 <= self.topic_search_default_days <= self.topic_search_max_days):
+            raise ValueError(
+                "topic_search_default_days must satisfy "
+                "1 <= topic_search_default_days <= topic_search_max_days"
             )
         return self
 

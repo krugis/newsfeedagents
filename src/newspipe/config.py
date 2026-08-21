@@ -118,6 +118,14 @@ class Settings(BaseSettings):
     # .env, which means sessions don't survive a restart — fine for an admin
     # tool; set it explicitly if that's undesirable.
     web_session_secret: str = Field(default_factory=lambda: secrets.token_hex(32))
+    # Where the login form lives. Not linked from any page (base.html has no
+    # "Admin Login" link) — set this to an unguessable path in .env so the
+    # login form itself isn't discoverable by casually browsing the site.
+    # `/admin`/`/news` still redirect here when unauthenticated (so a
+    # bookmarked `/admin` still works for the operator), which does reveal
+    # the path to anyone who tries those URLs directly — this is obscurity on
+    # top of the password, not a substitute for it.
+    admin_login_path: str = "/login"
 
     # Telegram bot (see telegram_bot/ package). Token from @BotFather; unset =
     # the bot process refuses to start (same "no default-credential footgun"
@@ -184,6 +192,16 @@ class Settings(BaseSettings):
                 "1 <= topic_search_default_days <= topic_search_max_days"
             )
         return self
+
+    @field_validator("admin_login_path")
+    @classmethod
+    def _validate_admin_login_path(cls, value: str) -> str:
+        if not value.startswith("/") or value.startswith("//"):
+            raise ValueError("admin_login_path must be an absolute path, e.g. /login")
+        reserved = {"/", "/topic", "/admin", "/news", "/logout"}
+        if value in reserved or value.startswith("/admin/"):
+            raise ValueError(f"admin_login_path must not collide with a reserved route: {value}")
+        return value
 
     @field_validator("retention_days")
     @classmethod

@@ -1,7 +1,8 @@
 """Flask app factory for the newspipe web UI.
 
-Three pages: a public `/` front page (today's top news, no login), and two
-pages behind one login — `/admin` (configurable values + fetch/dedup/label
+Public, no login: `/` (today's top news) and `/topic` (keyword search).
+Behind one login (see `web/auth.py` — login path is `ADMIN_LOGIN_PATH`, not
+linked from any page): `/admin` (configurable values + fetch/dedup/label
 triggers) and `/news` (a paginated, DB-dump-style view of `arrivals`).
 """
 
@@ -17,8 +18,7 @@ from newspipe.db.arrivals import count_arrivals, select_arrivals_page
 from newspipe.db.engine import connect
 from newspipe.web import settings_editor
 from newspipe.web.actions import ActionBusyError, run_action
-from newspipe.web.auth import bp as auth_bp
-from newspipe.web.auth import login_required
+from newspipe.web.auth import build_auth_blueprint, login_required
 from newspipe.web.frontpage import bp as frontpage_bp
 from newspipe.web.topic import bp as topic_bp
 
@@ -136,7 +136,7 @@ def create_app() -> Flask:
     settings = get_settings()
     app = Flask(__name__)
     app.secret_key = settings.web_session_secret
-    app.register_blueprint(auth_bp)
+    app.register_blueprint(build_auth_blueprint(settings.admin_login_path))
     app.register_blueprint(admin_bp)
     app.register_blueprint(frontpage_bp)
     app.register_blueprint(topic_bp)

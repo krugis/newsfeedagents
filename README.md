@@ -293,7 +293,13 @@ dev server used by `python -m newspipe web` directly — see that unit file).
   `?days=` widens that up to `TOPIC_SEARCH_MAX_DAYS`. See
   [Topic search](#topic-search) for how matches are ranked.
 - **`/admin`** and **`/news`** sit behind one admin login (session cookie,
-  single account from `ADMIN_USERNAME`/`ADMIN_PASSWORD` — no user table).
+  single account from `ADMIN_USERNAME`/`ADMIN_PASSWORD` — no user table). The
+  login form itself is at `ADMIN_LOGIN_PATH` (default `/login`), which is
+  **not** linked from anywhere in the UI — set it to an unguessable path per
+  deployment so the login form isn't discoverable by browsing the site (note:
+  `/admin`/`/news` still redirect there when unauthenticated, so visiting
+  those URLs directly does reveal the path — this is obscurity layered on
+  top of the password, not instead of it).
   `/admin` renders every editable setting from [Configuration](#configuration)
   except `DATABASE_URL` (changing the DB connection via a form served by a
   connection to that same DB would be a footgun) as a form; saving
@@ -476,6 +482,7 @@ Every setting lives in `.env` (see `.env.example` for the full list):
 | `WEB_HOST` / `WEB_PORT` | `127.0.0.1` / `8010`                              | Web UI bind address (see [Web UI](#web-ui)) |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / *(unset — login refused)*      | Web UI login; login is disabled until `ADMIN_PASSWORD` is set |
 | `WEB_SESSION_SECRET` | *(auto-generated per process start)*                | Signs the session cookie; set explicitly for sessions to survive a restart |
+| `ADMIN_LOGIN_PATH`   | `/login`                                              | Path the login form is served at; not linked from any page, set to an unguessable value per deployment |
 | `TELEGRAM_BOT_TOKEN` | *(unset — bot refuses to start)*                     | Token from @BotFather (see [Telegram bot](#telegram-bot)) |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | *(unset — open to any chat)*                   | Comma-separated chat ids allowed to use the bot at all |
 | `TELEGRAM_ACCESS_CODE` | *(unset — `/join` disabled)*                       | Self-service: `/join <code>` persists that chat as authorized |

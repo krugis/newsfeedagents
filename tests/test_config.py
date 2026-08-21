@@ -71,3 +71,20 @@ def test_label_order_default_is_newest_per_source():
 def test_label_order_rejects_invalid_value():
     with pytest.raises(ValidationError):
         Settings(label_order="not_a_real_order")
+
+
+def test_admin_login_path_default():
+    assert Settings().admin_login_path == "/login"
+
+
+def test_admin_login_path_accepts_custom_value():
+    assert Settings(admin_login_path="/portal-abc123").admin_login_path == "/portal-abc123"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["login", "//evil.com", "/", "/topic", "/admin", "/news", "/logout", "/admin/settings"],
+)
+def test_admin_login_path_rejects_invalid_or_reserved(value):
+    with pytest.raises(ValidationError):
+        Settings(admin_login_path=value)

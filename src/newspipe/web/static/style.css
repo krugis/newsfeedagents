@@ -309,3 +309,101 @@ table.news td:last-child {
 .story-item .headline {
   font-size: 1.15rem;
 }
+
+/* --- responsive --- */
+
+nav {
+  flex-wrap: wrap;
+}
+
+.headline {
+  overflow-wrap: break-word;
+}
+
+@media (max-width: 640px) {
+  body {
+    padding: 0.75rem 1rem 2rem;
+  }
+
+  nav {
+    gap: 0.75rem;
+  }
+
+  .masthead h1 {
+    font-size: 2rem;
+  }
+
+  .lead-story .headline {
+    font-size: 1.5rem;
+  }
+
+  .story-item .headline {
+    font-size: 1.05rem;
+  }
+
+  .topic-form input[type="text"] {
+    flex-basis: 100%;
+  }
+
+  /* news table becomes stacked cards */
+  table.news thead {
+    display: none;
+  }
+
+  table.news tr {
+    display: block;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid #8884;
+  }
+
+  table.news td {
+    display: block;
+    border-bottom: none;
+    padding: 0.15rem 0;
+    white-space: normal;
+  }
+
+  table.news td[data-label]::before {
+    content: attr(data-label) ": ";
+    font-weight: 700;
+    opacity: 0.7;
+  }
+
+  /* settings table stacks label above input */
+  table.settings,
+  table.settings tbody,
+  table.settings tr,
+  table.settings td {
+    display: block;
+    width: 100%;
+  }
+
+  table.settings tr {
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #8884;
+  }
+
+  table.settings td.label {
+    white-space: normal;
+    padding: 0 0 0.35rem;
+  }
+
+  table.settings td .help {
+    max-width: none;
+  }
+
+  table.settings input,
+  table.settings select {
+    width: 100%;
+  }
+}
+
+@media (max-width: 420px) {
+  .masthead h1 {
+    font-size: 1.7rem;
+  }
+
+  .lead-story .headline {
+    font-size: 1.35rem;
+  }
+}

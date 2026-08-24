@@ -19,9 +19,9 @@
   <tbody>
     {% for item in items %}
     <tr>
-      <td>{{ item.fetched_at }}</td>
-      <td>{{ item.source }}</td>
-      <td>{{ item.title }}</td>
+      <td data-label="Date">{{ item.fetched_at }}</td>
+      <td data-label="Source">{{ item.source }}</td>
+      <td data-label="News">{{ item.title }}</td>
     </tr>
     {% else %}
     <tr><td colspan="3">(no news yet)</td></tr>

@@ -23,6 +23,7 @@ from newspipe.config import Settings, get_settings
 from newspipe.db.engine import connect
 from newspipe.db.labels import (
     insert_label,
+    select_stories_by_ids,
     select_unlabeled_stories,
     select_unlabeled_story_sources,
 )
@@ -30,7 +31,7 @@ from newspipe.labeling.schema import build_headline_label_model
 
 logger = logging.getLogger(__name__)
 
-PROMPT_VERSION = "p1"
+PROMPT_VERSION = "p2"
 
 _REACHABILITY_PROBE_TIMEOUT = httpx.Timeout(5.0)
 
@@ -120,9 +121,16 @@ HN_FRONT_PAGE: {hn_front_page}
 Label only the headline above, returning the structured schema you were asked
 for. The schema's fields mean:
 
-- is_hot: True only for a major/breaking GenAI/ML event (a model release, a
+- is_hot: True for a major/breaking GenAI/ML event (a model release, a
   significant research result, a major policy decision, a large funding
   round). Routine coverage, speculation, and incremental updates are not hot.
+  A NEW MODEL INTRODUCTION — the first public announcement of a new named
+  model (flagship or a notable open-weight release) from any AI lab (OpenAI,
+  Anthropic, Google/DeepMind, Meta, Alibaba/Qwen, DeepSeek, Mistral, or any
+  other) — is always is_hot=True with importance >= {model_release_floor}.
+  Routine point-release patches, price/context-window tweaks to an
+  already-announced model, and unconfirmed rumors of an upcoming model are
+  NOT automatically hot — judge those on their own merits.
 - importance: an integer {importance_min}..{importance_max}. Cross-source
   arrival is an explicit importance signal: a headline carried by several
   independent sources, or that reached the Hacker News front page
@@ -189,7 +197,19 @@ def build_prompt(story: dict) -> str:
         hn_front_page="true" if story["hn_front_page"] else "false",
         importance_min=settings.importance_min,
         importance_max=settings.importance_max,
+        model_release_floor=model_release_importance_floor(settings),
     )
+
+
+def model_release_importance_floor(settings: Settings) -> int:
+    """The minimum `importance` a new-model-introduction headline must get.
+
+    Fixed at 80% up the configured [importance_min, importance_max] scale
+    (e.g. 8 on the default 1..10 scale) so it stays a "near the top" bar
+    regardless of how a deployment configures the scale's width.
+    """
+    span = settings.importance_max - settings.importance_min
+    return round(settings.importance_min + 0.8 * span)
 
 
 async def _batch_label(
@@ -244,54 +264,84 @@ def _select_for_labeling(conn, limit: int | None, story_ids: list[int] | None) -
     return select_unlabeled_stories(conn, limit=limit)
 
 
-def label_unlabeled(limit: int | None = None, story_ids: list[int] | None = None) -> LabelStats:
-    """Label unlabeled stories and persist one `labels` row each.
-
-    Which stories are picked is governed by `Settings.label_order` (see
-    `_select_for_labeling`); explicit `story_ids` always wins (used by tests
-    and targeted relabeling). Failures are counted and left unlabeled so a
-    later run retries them; a failed story never blocks the rest of the batch.
-    """
-    settings = get_settings()
+def _require_provider(settings: Settings) -> ProviderConfig:
     provider = resolve_labeler_provider(settings)
     if not provider.api_key:
         raise RuntimeError(
             f"No API key configured for labeler provider '{provider.name}' "
             "(and no usable fallback) — set one in .env"
         )
+    return provider
+
+
+def _label_stories(conn, stories: list[dict], provider: ProviderConfig) -> LabelStats:
+    """Run `stories` through the labeler and persist one new `labels` row each.
+
+    Shared by `label_unlabeled` and `relabel_stories` — they differ only in
+    which stories get selected beforehand.
+    """
+    stats = LabelStats(stories_attempted=len(stories))
+    if not stories:
+        return stats
+    outcomes = asyncio.run(_batch_label(stories, provider))
+    for story, outcome in zip(stories, outcomes, strict=True):
+        if isinstance(outcome, Exception):
+            stats.failed += 1
+            logger.warning("labeling failed for story %s: %s", story["story_id"], outcome)
+            continue
+        insert_label(
+            conn,
+            story["story_id"],
+            is_hot=outcome.is_hot,
+            importance=outcome.importance,
+            category=outcome.category,
+            is_genai_ml_relevant=outcome.is_genai_ml_relevant,
+            rationale=outcome.rationale,
+            model=provider.model_name,
+            prompt_version=PROMPT_VERSION,
+        )
+        stats.labels_created += 1
+        stats.labeled_story_ids.append(story["story_id"])
+        stats.stories.append(
+            {
+                "title": story["title"],
+                "is_hot": outcome.is_hot,
+                "importance": outcome.importance,
+                "category": outcome.category,
+            }
+        )
+    return stats
+
+
+def label_unlabeled(limit: int | None = None, story_ids: list[int] | None = None) -> LabelStats:
+    """Label unlabeled stories and persist one `labels` row each.
+
+    Which stories are picked is governed by `Settings.label_order` (see
+    `_select_for_labeling`); explicit `story_ids` restricts to that set but
+    still only picks up ones with no label yet (use `relabel_stories` to
+    redo already-labeled ones). Failures are counted and left unlabeled so a
+    later run retries them; a failed story never blocks the rest of the batch.
+    """
+    provider = _require_provider(get_settings())
     with connect() as conn:
         stories = _select_for_labeling(conn, limit, story_ids)
-        stats = LabelStats(stories_attempted=len(stories))
-        if not stories:
-            return stats
-        outcomes = asyncio.run(_batch_label(stories, provider))
-        for story, outcome in zip(stories, outcomes, strict=True):
-            if isinstance(outcome, Exception):
-                stats.failed += 1
-                logger.warning("labeling failed for story %s: %s", story["story_id"], outcome)
-                continue
-            insert_label(
-                conn,
-                story["story_id"],
-                is_hot=outcome.is_hot,
-                importance=outcome.importance,
-                category=outcome.category,
-                is_genai_ml_relevant=outcome.is_genai_ml_relevant,
-                rationale=outcome.rationale,
-                model=provider.model_name,
-                prompt_version=PROMPT_VERSION,
-            )
-            stats.labels_created += 1
-            stats.labeled_story_ids.append(story["story_id"])
-            stats.stories.append(
-                {
-                    "title": story["title"],
-                    "is_hot": outcome.is_hot,
-                    "importance": outcome.importance,
-                    "category": outcome.category,
-                }
-            )
-    return stats
+        return _label_stories(conn, stories, provider)
+
+
+def relabel_stories(story_ids: list[int]) -> LabelStats:
+    """Re-label specific stories — labeled or not — with the current prompt.
+
+    Inserts a new `labels` row per story; every read path uses each story's
+    most recent label (`ORDER BY story_id, labeled_at DESC`, see
+    `db/stories.py`), so this supersedes prior labels without deleting them.
+    Meant for targeted backfills after a `PROMPT_VERSION` change, e.g.
+    re-running everything in one `category` once the prompt's guidance for
+    it changes.
+    """
+    provider = _require_provider(get_settings())
+    with connect() as conn:
+        stories = select_stories_by_ids(conn, story_ids)
+        return _label_stories(conn, stories, provider)
 
 
 def main(limit: int | None = None) -> int:

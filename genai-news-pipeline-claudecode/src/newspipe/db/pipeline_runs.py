@@ -35,3 +35,17 @@ def finalize_pipeline_run(conn, run_id: int, *, status: str, stats: dict) -> Non
         """,
         (status, Jsonb(stats), run_id),
     )
+
+
+def select_last_successful_run_finished_at(conn) -> datetime | None:
+    """When the most recent successful (fetch→dedup→label) pipeline run finished.
+
+    Used as the "data last updated" freshness indicator on the front page,
+    /topic, and the bot's replies — a completed run is a stronger freshness
+    signal than "newest story timestamp" (which could reflect a single lucky
+    arrival even if the pipeline itself has been failing).
+    """
+    row = conn.execute(
+        "SELECT max(finished_at) AS finished_at FROM pipeline_runs WHERE status = 'success'"
+    ).fetchone()
+    return row["finished_at"] if row else None

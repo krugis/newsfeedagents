@@ -15,6 +15,7 @@ from flask import Blueprint, render_template, request
 
 from newspipe.config import get_settings
 from newspipe.db.engine import connect
+from newspipe.db.pipeline_runs import select_last_successful_run_finished_at
 from newspipe.db.stories import select_stories_by_topic
 
 bp = Blueprint("topic", __name__)
@@ -42,13 +43,14 @@ def topic_search():
     )
 
     stories: list[dict] = []
-    if query:
-        end = datetime.now(UTC)
-        start = end - timedelta(days=days)
-        with connect() as conn:
+    with connect() as conn:
+        if query:
+            end = datetime.now(UTC)
+            start = end - timedelta(days=days)
             stories = select_stories_by_topic(
                 conn, query, start, end, limit=settings.topic_search_limit
             )
+        last_updated = select_last_successful_run_finished_at(conn)
 
     return render_template(
         "topic.html",
@@ -56,5 +58,6 @@ def topic_search():
         days=days,
         max_days=settings.topic_search_max_days,
         stories=stories,
+        last_updated=last_updated,
         searched=bool(query),
     )

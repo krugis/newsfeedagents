@@ -2,8 +2,8 @@
 
 Used by the public front page (web/frontpage.py) to show "top news of the
 day": labeled, GenAI/ML-relevant stories for a given day, ranked by hotness
-then importance. Also backs topic search (web/topic.py), which searches
-titles across *all* stories — labeled or not.
+then importance. Also backs topic search (web/topic.py, telegram_bot/bot.py),
+which searches titles across *all* stories — labeled or not.
 """
 
 from __future__ import annotations

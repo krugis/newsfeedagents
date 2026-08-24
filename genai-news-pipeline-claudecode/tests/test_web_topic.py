@@ -9,6 +9,7 @@ import pytest
 from newspipe.config import Settings
 from newspipe.db.arrivals import insert_arrivals
 from newspipe.db.labels import insert_label
+from newspipe.db.pipeline_runs import finalize_pipeline_run, insert_pipeline_run
 from newspipe.db.stories import select_stories_by_topic
 from newspipe.dedup import run_dedup
 from newspipe.fetchers.base import RawItem
@@ -222,3 +223,14 @@ def test_topic_days_param_clamped_to_max(db_conn, source_scope, client, monkeypa
     resp = client.get("/topic?q=gemini&days=999")
 
     assert b"Zz Clamp Gemini Story" in resp.data
+
+
+def test_topic_shows_last_updated(db_conn, source_scope, client):
+    source_scope("zz-topic-updated")
+    run_id = insert_pipeline_run(db_conn, "zz-topic-updated-run", datetime.now(UTC))
+    finalize_pipeline_run(db_conn, run_id, status="success", stats={})
+    db_conn.commit()
+
+    resp = client.get("/topic")
+
+    assert b"Data updated" in resp.data

@@ -127,9 +127,31 @@ class Settings(BaseSettings):
     # top of the password, not a substitute for it.
     admin_login_path: str = "/login"
 
-    # Topic search (/topic web page): title search across all stories
-    # (labeled or not) in the last N days. `topic_search_max_days` caps how
-    # far back a request may reach.
+    # Telegram bot (see telegram_bot/ package). Token from @BotFather; unset =
+    # the bot process refuses to start (same "no default-credential footgun"
+    # pattern as ADMIN_PASSWORD). Reactive @mention/command replies work in
+    # any group the bot is a member of; the scheduled daily push only goes to
+    # the opt-in chat id allow-list below (empty = no scheduled push at all).
+    telegram_bot_token: str | None = None
+    # Access control: empty = the bot replies in any chat (open, current
+    # default). Once set, every handler (commands, mentions, DMs) silently
+    # ignores any chat id not in this list — no "not authorized" reply, so a
+    # stranger who finds/adds the bot gets no signal it's even listening.
+    # `telegram_access_code`, if set, adds a second, self-service path: any
+    # chat that sends `/join <code>` gets persisted as authorized (see
+    # db/telegram_auth.py) without you having to look up and add its id
+    # yourself — share the code with people you want to have access.
+    telegram_allowed_chat_ids: tuple[int, ...] = ()
+    telegram_access_code: str | None = None
+    telegram_digest_chat_ids: tuple[int, ...] = ()
+    telegram_daily_digest_cron_hour: str = "8"
+    telegram_daily_digest_cron_minute: str = "0"
+    telegram_default_window_hours: int = 3
+    telegram_digest_limit: int = 10
+
+    # Topic search (/topic web page and bot command): title search across all
+    # stories (labeled or not) in the last N days. `topic_search_max_days`
+    # caps how far back a request may reach.
     topic_search_default_days: int = 3
     topic_search_max_days: int = 7
     topic_search_limit: int = 30
@@ -143,6 +165,14 @@ class Settings(BaseSettings):
             if not categories:
                 raise ValueError("label_categories must not be empty")
             return categories
+        return value
+
+    @field_validator("telegram_allowed_chat_ids", "telegram_digest_chat_ids", mode="before")
+    @classmethod
+    def _parse_chat_ids(cls, value: object) -> object:
+        """Accept a comma-separated env string (`TELEGRAM_DIGEST_CHAT_IDS=-100123,-100456`)."""
+        if isinstance(value, str):
+            return tuple(int(v.strip()) for v in value.split(",") if v.strip())
         return value
 
     @model_validator(mode="after")

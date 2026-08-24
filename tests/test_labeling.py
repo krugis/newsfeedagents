@@ -25,6 +25,7 @@ from newspipe.labeling.labeler import (
     _select_for_labeling,
     build_prompt,
     label_unlabeled,
+    model_release_importance_floor,
     provider_config,
     resolve_labeler_provider,
 )
@@ -171,6 +172,25 @@ def test_build_prompt_includes_cross_source_signal():
         prompt.lower().split()
     )
     assert "HN_FRONT_PAGE: true" in prompt
+
+
+def test_build_prompt_instructs_new_model_introduction_is_always_hot():
+    prompt = build_prompt(
+        {
+            "title": "OpenAI releases GPT-6",
+            "sources": ["TechCrunch"],
+            "arrival_count": 1,
+            "hn_front_page": False,
+        }
+    )
+    normalized = " ".join(prompt.lower().split())
+    assert "new model introduction" in normalized
+    assert "is always is_hot=true" in normalized
+
+
+def test_model_release_importance_floor_is_80_percent_up_the_scale():
+    assert model_release_importance_floor(Settings(importance_min=1, importance_max=10)) == 8
+    assert model_release_importance_floor(Settings(importance_min=1, importance_max=100)) == 80
 
 
 # ---- provider selection (local/glm/deepseek, fallback) -------------------

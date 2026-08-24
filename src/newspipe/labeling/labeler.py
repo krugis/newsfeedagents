@@ -30,7 +30,7 @@ from newspipe.labeling.schema import build_headline_label_model
 
 logger = logging.getLogger(__name__)
 
-PROMPT_VERSION = "p1"
+PROMPT_VERSION = "p2"
 
 _REACHABILITY_PROBE_TIMEOUT = httpx.Timeout(5.0)
 
@@ -120,9 +120,16 @@ HN_FRONT_PAGE: {hn_front_page}
 Label only the headline above, returning the structured schema you were asked
 for. The schema's fields mean:
 
-- is_hot: True only for a major/breaking GenAI/ML event (a model release, a
+- is_hot: True for a major/breaking GenAI/ML event (a model release, a
   significant research result, a major policy decision, a large funding
   round). Routine coverage, speculation, and incremental updates are not hot.
+  A NEW MODEL INTRODUCTION — the first public announcement of a new named
+  model (flagship or a notable open-weight release) from any AI lab (OpenAI,
+  Anthropic, Google/DeepMind, Meta, Alibaba/Qwen, DeepSeek, Mistral, or any
+  other) — is always is_hot=True with importance >= {model_release_floor}.
+  Routine point-release patches, price/context-window tweaks to an
+  already-announced model, and unconfirmed rumors of an upcoming model are
+  NOT automatically hot — judge those on their own merits.
 - importance: an integer {importance_min}..{importance_max}. Cross-source
   arrival is an explicit importance signal: a headline carried by several
   independent sources, or that reached the Hacker News front page
@@ -189,7 +196,19 @@ def build_prompt(story: dict) -> str:
         hn_front_page="true" if story["hn_front_page"] else "false",
         importance_min=settings.importance_min,
         importance_max=settings.importance_max,
+        model_release_floor=model_release_importance_floor(settings),
     )
+
+
+def model_release_importance_floor(settings: Settings) -> int:
+    """The minimum `importance` a new-model-introduction headline must get.
+
+    Fixed at 80% up the configured [importance_min, importance_max] scale
+    (e.g. 8 on the default 1..10 scale) so it stays a "near the top" bar
+    regardless of how a deployment configures the scale's width.
+    """
+    span = settings.importance_max - settings.importance_min
+    return round(settings.importance_min + 0.8 * span)
 
 
 async def _batch_label(

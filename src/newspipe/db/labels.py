@@ -44,6 +44,31 @@ def select_unlabeled_stories(
     return conn.execute(sql, tuple(params)).fetchall()
 
 
+def select_stories_by_ids(conn, story_ids: list[int]) -> list[dict]:
+    """Return the given stories with everything the labeling prompt needs.
+
+    Unlike `select_unlabeled_stories`, this ignores label state, returning a
+    story whether or not it already has one — used for targeted relabeling
+    (e.g. backfilling stories labeled under an earlier `PROMPT_VERSION`).
+    """
+    return conn.execute(
+        """
+        SELECT s.story_id,
+               s.title,
+               s.arrival_count,
+               s.hn_front_page,
+               array_agg(DISTINCT src.name ORDER BY src.name) AS sources
+          FROM stories s
+          JOIN arrivals a ON a.story_id = s.story_id
+          JOIN sources src ON src.source_id = a.source_id
+         WHERE s.story_id = ANY(%s)
+         GROUP BY s.story_id
+         ORDER BY s.first_seen_at, s.story_id
+        """,
+        (story_ids,),
+    ).fetchall()
+
+
 def select_unlabeled_story_sources(conn) -> list[dict]:
     """For every unlabeled story: its "primary" source and first_seen_at.
 

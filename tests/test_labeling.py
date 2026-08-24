@@ -27,6 +27,7 @@ from newspipe.labeling.labeler import (
     label_unlabeled,
     model_release_importance_floor,
     provider_config,
+    relabel_stories,
     resolve_labeler_provider,
 )
 from newspipe.labeling.schema import HeadlineLabel, build_headline_label_model
@@ -491,6 +492,52 @@ def test_label_unlabeled_story_ids_filter(db_conn, source_scope, fake_api_key, m
 
     unlabeled = select_unlabeled_stories(db_conn, story_ids=[story_ids[2]])
     assert [r["story_id"] for r in unlabeled] == [story_ids[2]]
+
+
+def test_relabel_stories_supersedes_an_existing_label(
+    db_conn, source_scope, fake_api_key, monkeypatch
+):
+    (story_id,) = _make_story(
+        db_conn,
+        source_scope,
+        "zz-test-relabel-a",
+        [RawItem(external_id="zz-r1", url="https://example.com/r1", title="Relabel Test Story")],
+    )
+
+    async def fake_batch_old(stories, provider):  # noqa: ARG001
+        return [_label(importance=2, is_hot=False)]
+
+    monkeypatch.setattr("newspipe.labeling.labeler._batch_label", fake_batch_old)
+    first = label_unlabeled(story_ids=[story_id])
+    assert first.labels_created == 1
+
+    # already labeled, so label_unlabeled won't pick it up again
+    second = label_unlabeled(story_ids=[story_id])
+    assert second.stories_attempted == 0
+
+    async def fake_batch_new(stories, provider):  # noqa: ARG001
+        return [_label(importance=9, is_hot=True)]
+
+    monkeypatch.setattr("newspipe.labeling.labeler._batch_label", fake_batch_new)
+    relabeled = relabel_stories([story_id])
+    assert relabeled.stories_attempted == 1
+    assert relabeled.labels_created == 1
+
+    rows = db_conn.execute(
+        "SELECT is_hot, importance FROM labels WHERE story_id = %s ORDER BY labeled_at",
+        (story_id,),
+    ).fetchall()
+    assert [r["importance"] for r in rows] == [2, 9]
+
+    latest = db_conn.execute(
+        """
+        SELECT DISTINCT ON (story_id) is_hot, importance
+          FROM labels WHERE story_id = %s
+         ORDER BY story_id, labeled_at DESC
+        """,
+        (story_id,),
+    ).fetchone()
+    assert latest == {"is_hot": True, "importance": 9}
 
 
 def test_label_unlabeled_requires_api_key(monkeypatch):

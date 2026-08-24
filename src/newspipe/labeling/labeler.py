@@ -23,6 +23,7 @@ from newspipe.config import Settings, get_settings
 from newspipe.db.engine import connect
 from newspipe.db.labels import (
     insert_label,
+    select_stories_by_ids,
     select_unlabeled_stories,
     select_unlabeled_story_sources,
 )
@@ -263,54 +264,84 @@ def _select_for_labeling(conn, limit: int | None, story_ids: list[int] | None) -
     return select_unlabeled_stories(conn, limit=limit)
 
 
-def label_unlabeled(limit: int | None = None, story_ids: list[int] | None = None) -> LabelStats:
-    """Label unlabeled stories and persist one `labels` row each.
-
-    Which stories are picked is governed by `Settings.label_order` (see
-    `_select_for_labeling`); explicit `story_ids` always wins (used by tests
-    and targeted relabeling). Failures are counted and left unlabeled so a
-    later run retries them; a failed story never blocks the rest of the batch.
-    """
-    settings = get_settings()
+def _require_provider(settings: Settings) -> ProviderConfig:
     provider = resolve_labeler_provider(settings)
     if not provider.api_key:
         raise RuntimeError(
             f"No API key configured for labeler provider '{provider.name}' "
             "(and no usable fallback) — set one in .env"
         )
+    return provider
+
+
+def _label_stories(conn, stories: list[dict], provider: ProviderConfig) -> LabelStats:
+    """Run `stories` through the labeler and persist one new `labels` row each.
+
+    Shared by `label_unlabeled` and `relabel_stories` — they differ only in
+    which stories get selected beforehand.
+    """
+    stats = LabelStats(stories_attempted=len(stories))
+    if not stories:
+        return stats
+    outcomes = asyncio.run(_batch_label(stories, provider))
+    for story, outcome in zip(stories, outcomes, strict=True):
+        if isinstance(outcome, Exception):
+            stats.failed += 1
+            logger.warning("labeling failed for story %s: %s", story["story_id"], outcome)
+            continue
+        insert_label(
+            conn,
+            story["story_id"],
+            is_hot=outcome.is_hot,
+            importance=outcome.importance,
+            category=outcome.category,
+            is_genai_ml_relevant=outcome.is_genai_ml_relevant,
+            rationale=outcome.rationale,
+            model=provider.model_name,
+            prompt_version=PROMPT_VERSION,
+        )
+        stats.labels_created += 1
+        stats.labeled_story_ids.append(story["story_id"])
+        stats.stories.append(
+            {
+                "title": story["title"],
+                "is_hot": outcome.is_hot,
+                "importance": outcome.importance,
+                "category": outcome.category,
+            }
+        )
+    return stats
+
+
+def label_unlabeled(limit: int | None = None, story_ids: list[int] | None = None) -> LabelStats:
+    """Label unlabeled stories and persist one `labels` row each.
+
+    Which stories are picked is governed by `Settings.label_order` (see
+    `_select_for_labeling`); explicit `story_ids` restricts to that set but
+    still only picks up ones with no label yet (use `relabel_stories` to
+    redo already-labeled ones). Failures are counted and left unlabeled so a
+    later run retries them; a failed story never blocks the rest of the batch.
+    """
+    provider = _require_provider(get_settings())
     with connect() as conn:
         stories = _select_for_labeling(conn, limit, story_ids)
-        stats = LabelStats(stories_attempted=len(stories))
-        if not stories:
-            return stats
-        outcomes = asyncio.run(_batch_label(stories, provider))
-        for story, outcome in zip(stories, outcomes, strict=True):
-            if isinstance(outcome, Exception):
-                stats.failed += 1
-                logger.warning("labeling failed for story %s: %s", story["story_id"], outcome)
-                continue
-            insert_label(
-                conn,
-                story["story_id"],
-                is_hot=outcome.is_hot,
-                importance=outcome.importance,
-                category=outcome.category,
-                is_genai_ml_relevant=outcome.is_genai_ml_relevant,
-                rationale=outcome.rationale,
-                model=provider.model_name,
-                prompt_version=PROMPT_VERSION,
-            )
-            stats.labels_created += 1
-            stats.labeled_story_ids.append(story["story_id"])
-            stats.stories.append(
-                {
-                    "title": story["title"],
-                    "is_hot": outcome.is_hot,
-                    "importance": outcome.importance,
-                    "category": outcome.category,
-                }
-            )
-    return stats
+        return _label_stories(conn, stories, provider)
+
+
+def relabel_stories(story_ids: list[int]) -> LabelStats:
+    """Re-label specific stories — labeled or not — with the current prompt.
+
+    Inserts a new `labels` row per story; every read path uses each story's
+    most recent label (`ORDER BY story_id, labeled_at DESC`, see
+    `db/stories.py`), so this supersedes prior labels without deleting them.
+    Meant for targeted backfills after a `PROMPT_VERSION` change, e.g.
+    re-running everything in one `category` once the prompt's guidance for
+    it changes.
+    """
+    provider = _require_provider(get_settings())
+    with connect() as conn:
+        stories = select_stories_by_ids(conn, story_ids)
+        return _label_stories(conn, stories, provider)
 
 
 def main(limit: int | None = None) -> int:
